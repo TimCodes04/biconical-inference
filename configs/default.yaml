@@ -1,0 +1,65 @@
+# Default configuration for the biconical MgII wind inference pipeline.
+# Wind-only, 6 inferred parameters; source nuisances held fixed. First milestone
+# validates on HELD-OUT SIMULATED spectra (no real-data loader wired in yet).
+
+# ---- training-library generation ----
+library:
+  root: ./runs            # per-run THOR subruns live here (gitignored)
+  out: ./library/library.h5
+  n_sims: 1500            # Mac docker pilot pass; scale to ~30-50k on a cluster
+  method: lhs             # lhs | sobol
+  seed: 1
+  n_cont: 200000          # reduced photon budgets for the pilot (see MC-noise note)
+  n_line: 80000
+  aperture_kpc: 138.1     # r_vir; the sky-projected training aperture
+  want_mc_var: true       # store per-bin Monte-Carlo variance alongside spectra
+
+# THOR runner: 'docker' on this Mac (x86 container), 'native' on a cluster.
+thor:
+  mode: docker            # docker | native
+  image: thor-ci-python:local
+  thor_bin: thor
+  # native mode only: path/command to the thor executable
+  # mode: native
+  # thor_bin: /path/to/cmake-build-release-omp/src/thor
+
+# ---- fixed (not inferred) source nuisances ----
+fixed:
+  ew: 10.0                # intrinsic MgII doublet EW [A]
+  sigmasrc_kms: 100.0     # source line width [km/s]
+  mass_conservation: true # rho ~ r^-(2+a_v); a_v is inferred
+  disk_on: false          # WIND-ONLY
+  source: point
+
+# ---- emulator ----
+emulator:
+  arch: cnn               # cnn | mlp
+  hidden: 256
+  latent_ch: 64
+  heteroscedastic: true   # predict per-bin sigma to absorb MC label noise
+  epochs: 400
+  batch_size: 256
+  lr: 0.001
+  val_frac: 0.1
+  test_frac: 0.1
+  ckpt: ./checkpoints/emulator.pt
+
+# ---- NPE ----
+npe:
+  density_estimator: nsf  # neural spline flow (good for the curved a_v<->v_max degeneracy)
+  embedding_features: 24
+  hidden_features: 128    # flow capacity (raised for the harder instrument-conditioned task)
+  num_transforms: 6
+  train_source: library     # library = train on TRUE THOR spectra + real MC noise (closes
+                            # the emulator-vs-truth gap); emulator = legacy emulator-generated
+  n_amortized_sims: 400000  # (theta, x) draws (library rows resampled w/ fresh noise, or emulator)
+  batch_size: 1024
+  lr: 0.0005
+  stop_after_epochs: 20   # early-stopping patience
+  max_num_epochs: 300
+  instrument_conditioned: true  # amortize over the LSF/SNR prior (npe/instrument.py)
+  seed: 0
+  obs_noise_snr: 30         # canonical SNR (the in-regime reference for the GoF gate / app)
+  ckpt: ./checkpoints/npe.pt
+
+device: auto              # auto -> cuda > mps > cpu

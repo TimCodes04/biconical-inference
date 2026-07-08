@@ -1,0 +1,55 @@
+# Biconical MgII wind inference — standalone research project.
+#
+# THOR is consumed only as the *simulator binary* this project invokes
+# (docker on macOS, native build on a cluster); it is NOT imported as a library.
+# The thin config/extraction layer in `biconical_inference.thor_sim` is VENDORED
+# from THOR and must be re-synced when the biconical model changes (see README).
+[project]
+name = "biconical-inference"
+version = "0.1.0"
+description = "Neural emulator + simulation-based inference (NPE) for THOR's biconical MgII wind model."
+requires-python = ">=3.11"
+dependencies = [
+    "numpy>=1.26",
+    "scipy>=1.11",      # scipy.stats.qmc (Latin-Hypercube / Sobol designs)
+    "h5py>=3.8",        # read THOR HDF5 output; write the training library
+    "pyyaml>=6.0",      # write THOR config YAML
+    "matplotlib>=3.8",
+    "tqdm>=4.66",
+]
+
+[project.optional-dependencies]
+# Heavy ML stack — kept opt-in so the data-generation half stays light.
+# On Apple Silicon the default PyPI torch wheel is MPS-capable; on a CUDA
+# cluster select the CUDA wheel index (see [tool.uv.sources] below / README).
+ml = [
+    "torch>=2.4",
+    "sbi>=0.26",        # NPE + normalizing-flow density estimators + SBC/TARP diagnostics
+    "corner>=2.2",      # posterior corner plots
+]
+# Independent likelihood-based cross-check of the NPE posterior.
+mcmc = ["emcee>=3.1", "dynesty>=2.1"]
+# Interactive frontend (needs the `ml` extra too for torch/sbi).
+# Streamlit is pinned to a tested minor range: the custom theme (app/theme.py)
+# targets Streamlit's data-testid / data-baseweb DOM, which can shift across minors.
+app = ["streamlit>=1.58,<1.60", "plotly>=5.20"]
+dev = ["pytest>=8.0"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/biconical_inference"]
+
+# On Linux/cluster, resolve torch from the CUDA wheel index. On macOS the
+# default index is used (MPS). Uncomment + adjust the CUDA version as needed.
+# [tool.uv.sources]
+# torch = [{ index = "pytorch-cu124", marker = "sys_platform == 'linux'" }]
+# [[tool.uv.index]]
+# name = "pytorch-cu124"
+# url = "https://download.pytorch.org/whl/cu124"
+# explicit = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

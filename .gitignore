@@ -1,0 +1,36 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+.ipynb_checkpoints/
+
+# uv
+uv.lock  # comment this out to commit the lock for reproducibility once deps settle
+
+# Large generated artifacts — the training library, THOR run outputs, checkpoints, plots.
+# These are regenerated from code + config; never commit them.
+runs/
+library/
+*.h5
+*.hdf5
+*.npz
+*.pt
+*.ckpt
+checkpoints/
+*.png
+*.pdf
+
+# Old deep-field UI media (fly-around movie + poster) — unused by the current
+# console app (grep-verified: no references); kept local, not published.
+app/static/
+
+# Local dev noise / run logs — not for the public repo
+logs/
+sbi-logs/
+scratch_repro.py
+
+# OS
+.DS_Store

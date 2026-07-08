@@ -1,0 +1,96 @@
+# [AI-Claude] FIVE-PARAMETER, TWO-APERTURE model with USER-SET viewing angle.
+#
+# Same forward model, library, and emulator as configs/2ap.yaml — the ONLY difference is
+# that inclination (`incl`) is promoted from an INFERRED parameter to a CONDITIONER the user
+# sets before inference, exactly like the instrument (LSF, SNR) is already conditioned. The
+# NPE therefore infers 5 parameters — [logN, theta, av, vexp_kms, disk_logN] — and appends
+# the (normalized) viewing angle to the conditioning vector as a 3rd descriptor.
+#
+# Physically the viewing angle and the cone half-opening angle are degenerate; fixing the
+# viewing angle (often known from imaging/kinematics) breaks that degeneracy and tightens
+# the other five. Because inclination is ALREADY peeled per-line-of-sight at library-build
+# time (sample.py drops it from the LHS design), NO new simulations are needed:
+#   * library:  REUSES library/library_2ap.h5 (incl column already spans 0-90 deg densely)
+#   * emulator: REUSES checkpoints/emulator_2ap.pt (params(6)->spectrum is unchanged; the
+#               spectrum genuinely depends on inclination, so the emulator keeps it as input)
+#   * splits:   REUSES splits/reserved_test.json (same library => same fingerprint)
+# Only the NPE is retrained. See the plan and CLAUDE.md invariant #1 (param_bounds MUST match
+# the library-generation bounds in configs/sherlock_2ap.yaml).
+
+# ---- training-library (pulled back from Sherlock; identical contract to configs/2ap.yaml) ----
+library:
+  root: ./runs_2ap
+  out: ./library/library_2ap.h5       # REUSED — the same 2-aperture library
+  n_sims: 30000
+  method: lhs
+  seed: 1
+  incl_seed: 2
+  n_los: 6
+  n_cont: 300000
+  n_line: 0
+  aperture_kpc: [20.0, 138.1]
+  want_mc_var: true
+
+thor:
+  mode: docker
+  image: thor-ci-python:local
+  thor_bin: thor
+
+# ---- FULL parameter set (6) — matches the library's params_z columns + the emulator input ----
+# `context_params` marks the subset that are CONDITIONERS (user-set), not inferred. The NPE
+# infers free_params minus context_params = [logN, theta, av, vexp_kms, disk_logN] (5-D theta).
+free_params: [logN, theta, av, incl, vexp_kms, disk_logN]
+context_params: [incl]      # viewing angle: set by the user, appended as a conditioning descriptor
+param_bounds:
+  logN:      [11.0, 16.0]
+  theta:     [15.0, 82.0]
+  av:        [0.5,  2.0]
+  incl:      [0.0,  90.0]    # conditioning range; must match INCL_COS_RANGE in npe/instrument.py
+  vexp_kms:  [50.0, 600.0]
+  disk_logN: [13.0, 16.0]    # MUST match configs/sherlock_2ap.yaml (library 1e16 cap)
+
+# ---- fixed (not inferred) — MUST match configs/sherlock_2ap.yaml ----
+fixed:
+  ew: 0.0
+  sigmasrc_kms: 100.0
+  sigmaran_kms: 100.0       # WIND random velocity — FIXED
+  mass_conservation: true
+  outer_radius_box: 0.4
+  disk_on: true
+  disk_radius_box: 0.04
+  disk_height_box: 0.004    # 1 kpc thick
+  disk_tau_dust: 0.0
+  disk_sigma_kms: 50.0
+  source: point
+
+# ---- emulator (params(6) -> 2-aperture spectrum) — REUSED, not retrained ----
+emulator:
+  arch: cnn
+  hidden: 256
+  latent_ch: 64
+  heteroscedastic: true
+  epochs: 400
+  batch_size: 256
+  lr: 0.001
+  val_frac: 0.1
+  test_frac: 0.1
+  ckpt: ./checkpoints/emulator_2ap.pt      # SHARED with configs/2ap.yaml (6-D input incl. incl)
+
+# ---- NPE (2-aperture spectrum + LSF + SNR + viewing angle -> 5-param posterior) ----
+npe:
+  density_estimator: nsf
+  embedding_features: 24
+  hidden_features: 128
+  num_transforms: 6
+  train_source: library     # train on TRUE THOR spectra + real MC noise
+  n_amortized_sims: 400000
+  batch_size: 1024
+  lr: 0.0005
+  stop_after_epochs: 20
+  max_num_epochs: 300
+  instrument_conditioned: true
+  seed: 0
+  obs_noise_snr: 30
+  ckpt: ./checkpoints/npe_5param2ap.pt
+
+device: auto

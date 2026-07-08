@@ -1,0 +1,69 @@
+# Sherlock production — TWO-APERTURE + MULTI-LOS biconical MgII library WITH LINE EMISSION.
+#
+# Identical to configs/sherlock_2ap.yaml (native THOR, sharded SLURM array, dust-free,
+# mass-conserving bicone + fixed disk, disk_logN free, sigma_ran fixed) with ONE physical
+# change: the intrinsic MgII K:H=2:1 doublet EMISSION is turned ON at EW = 5 Angstrom.
+#   * fixed.ew: 5.0   -> thor_sim/config.py:sources_for now runs a 2nd "line" subrun per sim
+#   * library.n_line: 80000 -> line-photon budget; extract.py composes
+#         F = (WINDOW_A/N_cont)*H_cont + (EW/N_line)*H_line   (continuum units)
+# The doublet sits at dv=0 (2796) and +769.6 km/s (2803), so it fills the absorption trough
+# (infilling) but NEVER enters the far-blue continuum window (-1300,-1050) km/s — F_cont and
+# the continuum normalization are unchanged, so the constrained param_bounds below still hold
+# (no new blowup corner). This makes the training spectra realistic for real MgII data that
+# show emission/infilling, improving inference accuracy.
+#
+# Inclination is peeled, not designed (LHS over the 5 NON-incl params); n_sims = TRANSPORT
+# RUNS (rows = n_sims * n_los). A FRESH library.root is mandatory (never mix with the
+# continuum-only bicone_2ap root). Generate -> aggregate -> reserve -> train as in
+# SHERLOCK_2AP_EM.md. EDIT before submitting: thor.thor_bin.
+
+library:
+  root: $SCRATCH/bicone_2ap_em         # per-run dirs (high-churn); FRESH root, never mix with bicone_2ap
+  out:  $SCRATCH/bicone_2ap_em/library_2ap_em.h5
+  n_sims: 30000                        # number of TRANSPORT RUNS (rows = n_sims * n_los)
+  method: lhs                          # on-the-fly LHS over the 5 non-incl transport params
+  seed: 1
+  incl_seed: 2                         # seed for the per-run inclination design (uniform cos i)
+  n_los: 6                             # peel each transport to 6 inclinations (THOR warns at 10)
+  n_cont: 300000                       # 300k continuum photons/sim (the proven budget)
+  n_line: 80000                        # MgII emission doublet photons/sim (EMISSION ON; tune vs pilot)
+  aperture_kpc: [20.0, 138.1]          # inner (disk+inner wind) and r_vir (total)
+  want_mc_var: true
+  cleanup_outputs: true                # delete each sim's bulky THOR HDF5 after spectrum.npz
+
+thor:
+  mode: native                         # host paths == THOR paths; no docker
+  # The raw binary can't load libacpp-rt.so on the bare host — run THOR through the apptainer
+  # WRAPPER (~/thor_acpp.sh), which execs it inside the image. VERIFY the wrapper name with
+  # `ls ~/*.sh`, and that the cluster THOR build supports multi-LOS (SHERLOCK.md Phase 5.1).
+  thor_bin: $HOME/thor_acpp.sh
+
+# ---- 6 free (inferred) parameters + their constrained physical ranges ----
+# IDENTICAL to configs/sherlock_2ap.yaml (invariant #1: the training config's param_bounds
+# MUST match these). Emission does not change the sensible-value envelope.
+free_params: [logN, theta, av, incl, vexp_kms, disk_logN]
+param_bounds:
+  logN:      [11.0, 16.0]   # wind MgII column; extended down to 11 for weak-absorber coverage
+  theta:     [15.0, 82.0]   # cone half-opening angle; <82 keeps margin from the disk-clearing cap
+  av:        [0.5,  2.0]    # velocity power-law index; no near-constant/extreme laws
+  incl:      [0.0,  90.0]   # LOS inclination (uniform on the sphere; peeled, not designed)
+  vexp_kms:  [50.0, 600.0]  # v_max at R_H; <600 drops fast low-density gas (uninformative)
+  disk_logN: [13.0, 16.0]   # DISK MgII column [cm^-2]; free param, capped at 1e16 (optically-thick
+                            #   runaway/OOM above; 1e16 is the physical ceiling for a damped disk)
+
+# ---- fixed (not inferred) ----
+fixed:
+  ew: 5.0                   # EMISSION ON: intrinsic MgII doublet EW = 5 Angstrom (was 0.0)
+  sigmasrc_kms: 100.0       # source line width [km/s] (NOW USED — sets the doublet-gaussian sigma)
+  sigmaran_kms: 100.0       # WIND random velocity — FIXED at 100 km/s
+  mass_conservation: true   # bicones obey mass conservation: rho ~ r^-(2+a_v)
+  outer_radius_box: 0.4     # cone outer radius = 0.4 * 250 kpc box = 100 kpc
+  # --- static disk: ON, DUST-FREE, 1 kpc thick; column (disk_logN) is FREE above ---
+  disk_on: true
+  disk_radius_box: 0.04     # 10 kpc outer radius (0.04 * 250 kpc box)
+  disk_height_box: 0.004    # 1 kpc thick; relaxes the theta-clearing cap to <87.1 deg
+  disk_tau_dust: 0.0        # NO dust in the disk
+  disk_sigma_kms: 50.0      # disk velocity dispersion [km/s]
+  source: point
+
+device: auto

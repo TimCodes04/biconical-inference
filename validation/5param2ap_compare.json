@@ -1,0 +1,130 @@
+{
+  "config": "configs/5param2ap.yaml",
+  "n_sims": 500,
+  "baseline": {
+    "ckpts": [
+      "checkpoints/npe_5param2ap.pt"
+    ],
+    "metrics": {
+      "n_sims": 500,
+      "n_draws": 1000,
+      "mean_cov68": 0.6672,
+      "mean_cov90": 0.8948,
+      "mean_sbc_ks": 0.036,
+      "mean_abserr_normed": 0.07411457105504608,
+      "mean_width68_normed": 0.27498420660917805,
+      "per_param": {
+        "logN": {
+          "cov68": 0.66,
+          "cov90": 0.886,
+          "sbc_ks": 0.036000000000000004,
+          "median_abserr": 0.09220314025878906,
+          "median_abserr_normed": 0.018440628051757814,
+          "median_width68": 0.39322763442993125,
+          "median_width68_normed": 0.07864552688598625
+        },
+        "theta": {
+          "cov68": 0.644,
+          "cov90": 0.886,
+          "sbc_ks": 0.045999999999999985,
+          "median_abserr": 1.769174575805664,
+          "median_abserr_normed": 0.026405590683666626,
+          "median_width68": 6.012240829467768,
+          "median_width68_normed": 0.08973493775325027
+        },
+        "av": {
+          "cov68": 0.662,
+          "cov90": 0.89,
+          "sbc_ks": 0.04000000000000001,
+          "median_abserr": 0.2446357011795044,
+          "median_abserr_normed": 0.16309046745300293,
+          "median_width68": 0.9327262723445893,
+          "median_width68_normed": 0.6218175148963928
+        },
+        "vexp_kms": {
+          "cov68": 0.698,
+          "cov90": 0.92,
+          "sbc_ks": 0.035999999999999976,
+          "median_abserr": 83.41659164428711,
+          "median_abserr_normed": 0.1516665302623402,
+          "median_width68": 302.53180374145495,
+          "median_width68_normed": 0.5500578249844635
+        },
+        "disk_logN": {
+          "cov68": 0.672,
+          "cov90": 0.892,
+          "sbc_ks": 0.02200000000000002,
+          "median_abserr": 0.03290891647338867,
+          "median_abserr_normed": 0.01096963882446289,
+          "median_width68": 0.10399568557739247,
+          "median_width68_normed": 0.03466522852579749
+        }
+      },
+      "_k": 1
+    }
+  },
+  "ensemble3": {
+    "ckpts": [
+      "checkpoints/npe_5param2ap.pt",
+      "checkpoints/npe_5param2ap_s1.pt",
+      "checkpoints/npe_5param2ap_s2.pt"
+    ],
+    "metrics": {
+      "n_sims": 500,
+      "n_draws": 1000,
+      "mean_cov68": 0.7004,
+      "mean_cov90": 0.9136,
+      "mean_sbc_ks": 0.045600000000000016,
+      "mean_abserr_normed": 0.07439025524718251,
+      "mean_width68_normed": 0.2745704048126717,
+      "per_param": {
+        "logN": {
+          "cov68": 0.696,
+          "cov90": 0.908,
+          "sbc_ks": 0.02200000000000002,
+          "median_abserr": 0.09696817398071289,
+          "median_abserr_normed": 0.01939363479614258,
+          "median_width68": 0.36699085235595774,
+          "median_width68_normed": 0.07339817047119154
+        },
+        "theta": {
+          "cov68": 0.678,
+          "cov90": 0.914,
+          "sbc_ks": 0.051000000000000045,
+          "median_abserr": 1.57020902633667,
+          "median_abserr_normed": 0.023435955616965223,
+          "median_width68": 5.607374839782715,
+          "median_width68_normed": 0.08369216178780171
+        },
+        "av": {
+          "cov68": 0.676,
+          "cov90": 0.888,
+          "sbc_ks": 0.04099999999999998,
+          "median_abserr": 0.2501465380191803,
+          "median_abserr_normed": 0.16676435867945352,
+          "median_width68": 0.9264884042739867,
+          "median_width68_normed": 0.6176589361826578
+        },
+        "vexp_kms": {
+          "cov68": 0.71,
+          "cov90": 0.92,
+          "sbc_ks": 0.04600000000000004,
+          "median_abserr": 83.92862701416016,
+          "median_abserr_normed": 0.15259750366210936,
+          "median_width68": 307.37384887695305,
+          "median_width68_normed": 0.5588615434126419
+        },
+        "disk_logN": {
+          "cov68": 0.742,
+          "cov90": 0.938,
+          "sbc_ks": 0.068,
+          "median_abserr": 0.029279470443725586,
+          "median_abserr_normed": 0.009759823481241861,
+          "median_width68": 0.11772363662719698,
+          "median_width68_normed": 0.03924121220906566
+        }
+      },
+      "_k": 3
+    }
+  }
+}

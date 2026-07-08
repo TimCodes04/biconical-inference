@@ -1,0 +1,82 @@
+# [AI-Claude] BIGGER-CAPACITY variant of configs/5param2ap_em.yaml — accuracy A/B experiment.
+#
+# Identical library / emulator / prior / context to 5param2ap_em.yaml (the EW=5 emission
+# family), so it is directly comparable on the SAME reserved test set. The ONLY changes are
+# the NPE estimator size and training budget — retrain the NPE only, reusing the emission
+# emulator (emulator_2ap_em.pt); no new THOR.
+#   embedding_features 24->48 · hidden_features 128->256 · num_transforms 6->8
+#   n_amortized_sims 400k->800k · max_num_epochs 300->400
+# Compared against checkpoints/npe_5param2ap_em.pt via scripts/compare_npe.py to pick the
+# estimator that MAXIMIZES accuracy for the user-set-inclination emission model.
+
+library:
+  root: ./runs_2ap_em
+  out: ./library/library_2ap_em.h5
+  n_sims: 30000
+  method: lhs
+  seed: 1
+  incl_seed: 2
+  n_los: 6
+  n_cont: 300000
+  n_line: 80000                 # EMISSION ON (must match sherlock_2ap_em.yaml)
+  aperture_kpc: [20.0, 138.1]
+  want_mc_var: true
+
+thor:
+  mode: docker
+  image: thor-ci-python:local
+  thor_bin: thor
+
+free_params: [logN, theta, av, incl, vexp_kms, disk_logN]
+context_params: [incl]
+param_bounds:
+  logN:      [11.0, 16.0]
+  theta:     [15.0, 82.0]
+  av:        [0.5,  2.0]
+  incl:      [0.0,  90.0]
+  vexp_kms:  [50.0, 600.0]
+  disk_logN: [13.0, 16.0]
+
+fixed:
+  ew: 5.0                       # EMISSION ON: intrinsic MgII doublet EW = 5 Angstrom
+  sigmasrc_kms: 100.0
+  sigmaran_kms: 100.0
+  mass_conservation: true
+  outer_radius_box: 0.4
+  disk_on: true
+  disk_radius_box: 0.04
+  disk_height_box: 0.004
+  disk_tau_dust: 0.0
+  disk_sigma_kms: 50.0
+  source: point
+
+emulator:
+  arch: cnn
+  hidden: 256
+  latent_ch: 64
+  heteroscedastic: true
+  epochs: 400
+  batch_size: 256
+  lr: 0.001
+  val_frac: 0.1
+  test_frac: 0.1
+  ckpt: ./checkpoints/emulator_2ap_em.pt   # SHARED with 5param2ap_em.yaml (emission emulator)
+
+# ---- NPE — bigger estimator + more pairs (the only real difference vs 5param2ap_em.yaml) ----
+npe:
+  density_estimator: nsf
+  embedding_features: 48        # was 24
+  hidden_features: 256          # was 128
+  num_transforms: 8             # was 6
+  train_source: library
+  n_amortized_sims: 800000      # was 400000
+  batch_size: 1024
+  lr: 0.0005
+  stop_after_epochs: 20
+  max_num_epochs: 400           # was 300
+  instrument_conditioned: true
+  seed: 0
+  obs_noise_snr: 30
+  ckpt: ./checkpoints/npe_5param2ap_em_big.pt
+
+device: auto

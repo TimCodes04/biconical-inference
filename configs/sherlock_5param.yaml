@@ -1,0 +1,66 @@
+# Sherlock production — 5-PARAMETER "precise" biconical MgII training library.
+#
+# Same forward model as configs/sherlock.yaml (native THOR, sharded SLURM array,
+# continuum-only, dust-free, mass-conserving bicone + fixed disk), with TWO changes:
+#   1. σ_ran is FIXED at 100 km/s — only 5 wind params are varied (logN, θ, a_v, i,
+#      v_max). The reduced prior (see free_params/param_bounds) buys ~2× tighter
+#      logN/θ/i at the cost of validity only near σ_ran≈100.
+#   2. The fixed disk is slimmed to 1 kpc thick (disk_height_box: 0.004; was 2 kpc),
+#      keeping radius 10 kpc and logN=14.
+#
+# The design is PRE-BUILT and physically constrained: scripts/make_constrained_design.py
+# draws a constrained-range LHS and removes the residual continuum-blowup corner, writing
+# design/design_5param.npz. sample.py reads `library.design_file` and runs exactly those
+# rows (identical across all array shards) — so no junk/unphysical combos are simulated.
+#
+# Generate -> aggregate -> pull back exactly as in SHERLOCK.md, but with this config and
+# scripts/sbatch_sherlock_5param.sh. EDIT before submitting: thor.thor_bin.
+
+library:
+  root: $SCRATCH/bicone_5param        # per-run dirs (high-churn); $SCRATCH expanded at runtime
+  out:  $SCRATCH/bicone_5param/library_5param.h5
+  n_sims: 50000                       # = rows in the design file (cap; uses all if smaller)
+  method: lhs                         # ignored when design_file is set (kept for provenance)
+  seed: 1
+  design_file: design/design_5param.npz   # constrained, physically-filtered 5-param design
+  n_cont: 300000                      # 300k continuum photons/sim (the proven 6-param budget)
+  n_line: 0                           # continuum-only (no MgII emission doublet)
+  aperture_kpc: 138.1
+  want_mc_var: true
+  cleanup_outputs: true               # delete each sim's bulky THOR HDF5 after spectrum.npz
+
+thor:
+  mode: native                        # host paths == THOR paths; no docker
+  # The raw binary can't load libacpp-rt.so on the bare host — the 6-param run invoked
+  # THOR through the apptainer WRAPPER (~/thor_acpp.sh), which runs it inside the image
+  # where every lib is present. Point thor_bin at THAT wrapper (it takes the config path
+  # as its argument). $HOME/~ are expanded by build_runner. VERIFY the wrapper name with
+  # `ls ~/*.sh` and that it `cat`s to an `apptainer exec … thor "$@"`.
+  thor_bin: $HOME/thor_acpp.sh
+
+# ---- 5 free (inferred) wind parameters + their constrained physical ranges ----
+free_params: [logN, theta, av, incl, vexp_kms]
+param_bounds:
+  logN:     [11.0, 16.0]    # wind MgII column; extended down to 11 for weak-absorber coverage
+  theta:    [15.0, 82.0]    # cone half-opening angle; <82 keeps margin from the disk-clearing cap
+  av:       [0.5,  2.0]     # velocity power-law index; no near-constant/extreme laws
+  incl:     [0.0,  90.0]    # LOS inclination (uniform on the sphere)
+  vexp_kms: [50.0, 600.0]   # v_max at R_H; <600 drops fast low-density gas (uninformative)
+
+# ---- fixed (not inferred) ----
+fixed:
+  ew: 0.0                   # continuum-only (no MgII emission doublet)
+  sigmasrc_kms: 100.0       # source line width (unused at ew=0)
+  sigmaran_kms: 100.0       # WIND random velocity — FIXED (this is the 5-param model's lever)
+  mass_conservation: true   # bicones obey mass conservation: rho ~ r^-(2+a_v)
+  outer_radius_box: 0.4     # cone outer radius = 0.4 * 250 kpc box = 100 kpc
+  # --- static disk: ON, fixed, DUST-FREE, slimmed to 1 kpc thick ---
+  disk_on: true
+  disk_logN: 14.0           # fixed disk MgII column [cm^-2]
+  disk_radius_box: 0.04     # 10 kpc outer radius (0.04 * 250 kpc box)
+  disk_height_box: 0.004    # 1 kpc thick (was 0.008 = 2 kpc); relaxes the θ-clearing cap to <87.1°
+  disk_tau_dust: 0.0        # NO dust in the disk
+  disk_sigma_kms: 50.0      # disk velocity dispersion [km/s]
+  source: point
+
+device: auto

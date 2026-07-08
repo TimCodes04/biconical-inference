@@ -1,0 +1,83 @@
+# PILOT — de-risk the two-aperture + multi-LOS pipeline before the full campaign.
+#
+# A few-hundred-run regen (Sherlock native THOR) to validate the v2 pipeline end-to-end:
+#   sample (a few shards) -> library (v2) -> splits (run-level) -> smoke-train emu + NPE
+#   -> Phase-4 ablation (does the 2nd aperture tighten the a_v<->v_max banana / disk_logN?).
+# Confirm there are no new THOR aborts / continuum-blowup artifacts at high disk_logN (1e17),
+# and MEASURE the per-LOS peel overhead to fix K and N_runs for configs/sherlock_2ap.yaml.
+#
+#   python -m biconical_inference.sample     --config configs/pilot_2ap.yaml --shard 0/4
+#   python -m biconical_inference.library    --config configs/pilot_2ap.yaml
+#   python -m biconical_inference.splits     --config configs/pilot_2ap.yaml
+#   python -m biconical_inference.emulator.train --config configs/pilot_2ap.yaml
+#   python -m biconical_inference.npe.train_npe  --config configs/pilot_2ap.yaml
+
+library:
+  root: $SCRATCH/bicone_pilot_2ap
+  out:  $SCRATCH/bicone_pilot_2ap/library_pilot_2ap.h5
+  n_sims: 200                          # transport runs (rows = 200 * n_los)
+  method: lhs
+  seed: 1
+  incl_seed: 2
+  n_los: 4                             # smaller K for the pilot; measure peel overhead here
+  n_cont: 200000                       # slightly lighter than production for speed
+  n_line: 0
+  aperture_kpc: [20.0, 138.1]
+  want_mc_var: true
+  cleanup_outputs: true
+
+thor:
+  mode: native
+  thor_bin: $HOME/thor_acpp.sh         # the apptainer wrapper; VERIFY multi-LOS support first
+
+free_params: [logN, theta, av, incl, vexp_kms, disk_logN]
+param_bounds:
+  logN:      [11.0, 16.0]
+  theta:     [15.0, 82.0]
+  av:        [0.5,  2.0]
+  incl:      [0.0,  90.0]
+  vexp_kms:  [50.0, 600.0]
+  disk_logN: [13.0, 16.0]   # capped at 1e16 (above -> optically-thick disk -> runaway/OOM)
+
+fixed:
+  ew: 0.0
+  sigmasrc_kms: 100.0
+  sigmaran_kms: 100.0
+  mass_conservation: true
+  outer_radius_box: 0.4
+  disk_on: true
+  disk_radius_box: 0.04
+  disk_height_box: 0.004
+  disk_tau_dust: 0.0
+  disk_sigma_kms: 50.0
+  source: point
+
+emulator:
+  arch: cnn
+  hidden: 256
+  latent_ch: 64
+  heteroscedastic: true
+  epochs: 60                           # smoke train only
+  batch_size: 256
+  lr: 0.001
+  val_frac: 0.1
+  test_frac: 0.1
+  ckpt: ./checkpoints/emulator_pilot_2ap.pt
+
+npe:
+  density_estimator: nsf
+  embedding_features: 24
+  hidden_features: 128
+  num_transforms: 6
+  train_source: library
+  n_amortized_sims: 100000             # smaller for the pilot
+  batch_size: 1024
+  lr: 0.0005
+  stop_after_epochs: 15
+  max_num_epochs: 80
+  instrument_conditioned: true
+  seed: 0
+  obs_noise_snr: 30
+  ckpt: ./checkpoints/npe_pilot_2ap.pt
+
+device: auto

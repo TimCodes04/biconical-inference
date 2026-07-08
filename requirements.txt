@@ -1,0 +1,14 @@
+# Runtime dependencies for the Streamlit app (Streamlit Community Cloud reads this).
+# Mirrors pyproject.toml's core deps + the `ml` and `app` optional extras, because
+# Cloud does NOT install optional-dependency groups from pyproject. Keep in sync.
+numpy>=1.26
+scipy>=1.11
+h5py>=3.8
+pyyaml>=6.0
+matplotlib>=3.8
+tqdm>=4.66
+torch>=2.4
+sbi>=0.26
+corner>=2.2
+streamlit>=1.58,<1.60
+plotly>=5.20

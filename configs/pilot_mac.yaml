@@ -1,0 +1,43 @@
+# Mac pilot: wind-only, CONTINUUM-ONLY (ew=0) biconical MgII training library.
+# 150 LHS sims via the x86-64 THOR docker container on this Mac.
+#
+# Two-mount docker (see thor.extra_args): /work = this inference repo (configs +
+# per-run outputs, via the existing mount_host=dirname(root)); /thor = the THOR
+# repo, giving the container the binary + the yaml-cpp shared lib. ew=0 makes
+# cfg.sources_for return just ["cont"] -> one continuum THOR run per sample.
+# Production (~30-50k, native+sharded) lives in configs/sherlock.yaml.
+
+library:
+  root: ./runs
+  out: ./library/library.h5
+  n_sims: 150
+  method: lhs
+  seed: 1
+  n_cont: 200000
+  n_line: 0
+  aperture_kpc: 138.1
+  want_mc_var: true
+
+thor:
+  mode: docker
+  image: thor-ci-python:local
+  thor_bin: /thor/cmake-build-release-omp/src/thor
+  extra_args:
+    - "--platform"
+    - "linux/amd64"
+    - "--memory=14g"
+    - "-v"
+    - "/Users/jarvis/Documents/thor/branches/biconical_model:/thor"
+    - "-e"
+    - "ACPP_VISIBILITY_MASK=omp"
+    - "-e"
+    - "LD_LIBRARY_PATH=/thor/cmake-build-release-omp/_deps/yaml-cpp-build"
+
+fixed:
+  ew: 0.0
+  sigmasrc_kms: 100.0
+  mass_conservation: true
+  disk_on: false
+  source: point
+
+device: auto

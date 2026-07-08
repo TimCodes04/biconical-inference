@@ -1,0 +1,20 @@
+# Streamlit theme + server config for the Biconical MgII Wind tool.  [AI-Claude]
+#
+# The [theme] block sets the FIRST-PAINT colors (rendered before any Python runs),
+# so the app opens in the Observatory-console dark theme — no white flash before
+# app/theme.py injects the full CSS. Palette mirrors app/theme.py: graphite ground
+# #0e1116, one signal-cyan accent #4aa8c7, off-white ink #e6e9ef.
+
+[theme]
+base = "dark"
+primaryColor = "#4aa8c7"
+backgroundColor = "#0e1116"
+secondaryBackgroundColor = "#151922"
+textColor = "#e6e9ef"
+font = "monospace"
+
+[server]
+enableStaticServing = true
+
+[browser]
+gatherUsageStats = false

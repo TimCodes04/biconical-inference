@@ -1,0 +1,83 @@
+{
+  "model": "baseline (pre-retrain)",
+  "instrument": {
+    "lsf_fwhm_kms": 0.0,
+    "snr": 30
+  },
+  "n_test": 4989,
+  "emulator": {
+    "n": 4989,
+    "rmse": 2.5589845180511475,
+    "mae": 0.032467685639858246,
+    "median_abs_resid": 0.00018584728240966797,
+    "max_abs_resid": 366.23974609375,
+    "frac_within_1sig": 0.7544230118761275,
+    "frac_within_2sig": 0.9588399165664462,
+    "mean_chi2": 1.0576305389404297
+  },
+  "npe_canonical": {
+    "n_sims": 500,
+    "n_draws": 512,
+    "mean_cov68": 0.6336666666666667,
+    "mean_cov90": 0.865,
+    "mean_sbc_ks": 0.06050260416666667,
+    "mean_abserr_normed": 0.07489167681331961,
+    "mean_width68_normed": 0.260179113495301,
+    "per_param": {
+      "logN": {
+        "cov68": 0.648,
+        "cov90": 0.848,
+        "sbc_ks": 0.04810937500000001,
+        "median_abserr": 0.14789128303527832,
+        "median_abserr_normed": 0.03697282075881958,
+        "median_width68": 0.4928592300415042,
+        "median_width68_normed": 0.12321480751037606
+      },
+      "theta": {
+        "cov68": 0.632,
+        "cov90": 0.872,
+        "sbc_ks": 0.06467187499999999,
+        "median_abserr": 3.888845443725586,
+        "median_abserr_normed": 0.05718890358419979,
+        "median_width68": 12.493387565612794,
+        "median_width68_normed": 0.18372628772959992
+      },
+      "av": {
+        "cov68": 0.668,
+        "cov90": 0.884,
+        "sbc_ks": 0.024156250000000004,
+        "median_abserr": 0.6028745174407959,
+        "median_abserr_normed": 0.15071862936019897,
+        "median_width68": 2.2365710210800174,
+        "median_width68_normed": 0.5591427552700043
+      },
+      "incl": {
+        "cov68": 0.618,
+        "cov90": 0.856,
+        "sbc_ks": 0.058968750000000014,
+        "median_abserr": 2.03952693939209,
+        "median_abserr_normed": 0.022661410437689888,
+        "median_width68": 5.742744522094725,
+        "median_width68_normed": 0.06380827246771917
+      },
+      "vexp_kms": {
+        "cov68": 0.644,
+        "cov90": 0.888,
+        "sbc_ks": 0.044062500000000004,
+        "median_abserr": 143.90312385559082,
+        "median_abserr_normed": 0.1514769724795693,
+        "median_width68": 517.8191937255859,
+        "median_width68_normed": 0.5450728355006168
+      },
+      "sigmaran_kms": {
+        "cov68": 0.592,
+        "cov90": 0.842,
+        "sbc_ks": 0.123046875,
+        "median_abserr": 11.374246597290039,
+        "median_abserr_normed": 0.030331324259440105,
+        "median_width68": 32.291145935058616,
+        "median_width68_normed": 0.08610972249348964
+      }
+    }
+  }
+}

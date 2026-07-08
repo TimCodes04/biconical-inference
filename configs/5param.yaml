@@ -1,0 +1,87 @@
+# 5-PARAMETER "precise" model — LOCAL training + app config.
+#
+# Companion to configs/sherlock_5param.yaml (which GENERATES the library on the
+# cluster). This config TRAINS the emulator + NPE on the pulled-back library and
+# drives the Streamlit app's "Precise" model. σ_ran is fixed at 100 km/s, the disk
+# is 1 kpc thick, and the wind prior is the constrained 5-param box (see below).
+#
+# Pipeline once library/library_5param.h5 is present:
+#   python -m biconical_inference.splits        --config configs/5param.yaml
+#   python -m biconical_inference.emulator.train --config configs/5param.yaml
+#   python -m biconical_inference.npe.train_npe  --config configs/5param.yaml
+#   python scripts/validate_holdout.py           --config configs/5param.yaml
+
+# ---- training-library (pulled back from Sherlock) ----
+library:
+  root: ./runs_5param                 # only used if you also generate locally (docker)
+  out: ./library/library_5param.h5    # the handoff file from Sherlock
+  n_sims: 50000
+  method: lhs
+  seed: 1
+  design_file: design/design_5param.npz
+  n_cont: 300000
+  n_line: 0
+  aperture_kpc: 138.1
+  want_mc_var: true
+
+# THOR runner (only used for optional LOCAL docker generation; training needs no THOR).
+thor:
+  mode: docker
+  image: thor-ci-python:local
+  thor_bin: thor
+
+# ---- 5 free (inferred) wind parameters + their constrained physical ranges ----
+free_params: [logN, theta, av, incl, vexp_kms]
+param_bounds:
+  logN:     [11.0, 16.0]
+  theta:    [15.0, 82.0]
+  av:       [0.5,  2.0]
+  incl:     [0.0,  90.0]
+  vexp_kms: [50.0, 600.0]
+
+# ---- fixed (not inferred) — MUST match configs/sherlock_5param.yaml ----
+fixed:
+  ew: 0.0
+  sigmasrc_kms: 100.0
+  sigmaran_kms: 100.0       # WIND random velocity — FIXED (the 5-param model's lever)
+  mass_conservation: true
+  outer_radius_box: 0.4
+  disk_on: true
+  disk_logN: 14.0
+  disk_radius_box: 0.04
+  disk_height_box: 0.004    # 1 kpc thick
+  disk_tau_dust: 0.0
+  disk_sigma_kms: 50.0
+  source: point
+
+# ---- emulator (params -> spectrum) ----
+emulator:
+  arch: cnn
+  hidden: 256
+  latent_ch: 64
+  heteroscedastic: true
+  epochs: 400
+  batch_size: 256
+  lr: 0.001
+  val_frac: 0.1
+  test_frac: 0.1
+  ckpt: ./checkpoints/emulator_5param.pt
+
+# ---- NPE (spectrum -> posterior) ----
+npe:
+  density_estimator: nsf
+  embedding_features: 24
+  hidden_features: 128
+  num_transforms: 6
+  train_source: library     # train on TRUE THOR spectra + real MC noise (closes the emu gap)
+  n_amortized_sims: 400000
+  batch_size: 1024
+  lr: 0.0005
+  stop_after_epochs: 20
+  max_num_epochs: 300
+  instrument_conditioned: true
+  seed: 0
+  obs_noise_snr: 30
+  ckpt: ./checkpoints/npe_5param.pt
+
+device: auto
