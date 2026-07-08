@@ -23,6 +23,11 @@ checkpoints/
 *.png
 *.pdf
 
+# ...EXCEPT the trained checkpoints, which ARE published so the deployed
+# Streamlit app can load models (the ~155 MB library stays out — too big for git).
+!checkpoints/
+!checkpoints/*.pt
+
 # Old deep-field UI media (fly-around movie + poster) — unused by the current
 # console app (grep-verified: no references); kept local, not published.
 app/static/
