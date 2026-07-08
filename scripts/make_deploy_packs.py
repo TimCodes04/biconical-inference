@@ -27,7 +27,8 @@ from biconical_inference import splits as _splits
 from biconical_inference.library import load_library
 
 DEPLOYABLE = ["configs/2ap.yaml", "configs/5param2ap.yaml",
-              "configs/default.yaml", "configs/5param.yaml"]
+              "configs/default.yaml", "configs/5param.yaml",
+              "configs/5param2ap_em.yaml"]
 
 
 def make_pack(config_path, rows, out_dir="deploy"):
