@@ -28,6 +28,16 @@ checkpoints/
 !checkpoints/
 !checkpoints/*.pt
 
+# Small held-out "deploy packs" ARE published (they stand in for the big library on
+# Streamlit Cloud — see scripts/make_deploy_packs.py + core.load_holdout fallback).
+!deploy/
+!deploy/*.npz
+
+# Validation plates ARE published: they drive the home "calibrated" badge (home._validated)
+# and the whole Method tab (app/views/how.py reads validation/<stem>/*.png).
+!validation/
+!validation/**/*.png
+
 # Old deep-field UI media (fly-around movie + poster) — unused by the current
 # console app (grep-verified: no references); kept local, not published.
 app/static/

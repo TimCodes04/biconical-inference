@@ -19,6 +19,7 @@ after a model is chosen.
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 
 import numpy as np
@@ -61,6 +62,32 @@ def load_models(config_path=CONFIG):
     return cfg, prior, emulator, posterior, dev, conditioned, n_ap
 
 
+def _deploy_pack_path(config_path):
+    """Where the precomputed held-out 'deploy pack' lives (deploy/holdout_<config-stem>.npz)."""
+    stem = os.path.splitext(os.path.basename(config_path))[0]
+    return os.path.join("deploy", f"holdout_{stem}.npz")
+
+
+def _load_deploy_pack(config_path):
+    """Deployment fallback for load_holdout when the multi-GB library isn't shipped (e.g. on
+    Streamlit Community Cloud). A small precomputed subsample of the reserved-test rows —
+    enough for the χ²ᵣ reference + held-out examples. Built by scripts/make_deploy_packs.py;
+    the returned dict mirrors load_holdout's (idx is None — no full-library indices here)."""
+    path = _deploy_pack_path(config_path)
+    if not os.path.exists(path):
+        raise FileNotFoundError(
+            f"Neither the training library nor a deploy pack ({path}) is present. "
+            "Run `python scripts/make_deploy_packs.py` locally, or restore the library.")
+    d = np.load(path)
+    ap = d["aperture_kpc"] if "aperture_kpc" in d.files else None
+    n_runs = int(d["n_runs"])
+    return {"z": d["z"].astype(np.float32), "flux": d["flux"].astype(np.float32), "idx": None,
+            "velocity": d["velocity"].astype(np.float32), "warning": None,
+            "n_apertures": int(d["n_apertures"]),
+            "aperture_kpc": np.asarray(ap) if ap is not None else None,
+            "n_rows": int(d["n_rows"]), "n_runs": (n_runs if n_runs >= 0 else None)}
+
+
 @st.cache_data
 def load_holdout(config_path=CONFIG):
     """Reproduce the emulator's deterministic test split (sims it never trained on).
@@ -69,10 +96,16 @@ def load_holdout(config_path=CONFIG):
     reserved RUNS — the run-level split emulator.data.make_datasets uses — so the K correlated
     inclinations of one transport run never straddle train/test (a row split would leak). For a
     v1 single-aperture library it stays the original row split. flux is (M, nbins) or
-    (M, A, nbins)."""
+    (M, A, nbins).
+
+    Deployment: if the (multi-GB) library isn't present, fall back to the small precomputed
+    deploy pack so the app still runs — see _load_deploy_pack."""
     cfg = yaml.safe_load(open(config_path))
     em = cfg["emulator"]
-    lib = load_library(cfg["library"]["out"])
+    lib_path = cfg["library"]["out"]
+    if not os.path.exists(lib_path):
+        return _load_deploy_pack(config_path)
+    lib = load_library(lib_path)
     z = lib["params_z"].astype(np.float32)
     flux = lib["spectra"].astype(np.float32)
     n = z.shape[0]
