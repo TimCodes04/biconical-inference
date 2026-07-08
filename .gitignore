@@ -7,8 +7,10 @@ venv/
 .pytest_cache/
 .ipynb_checkpoints/
 
-# uv
-uv.lock  # comment this out to commit the lock for reproducibility once deps settle
+# uv — do NOT commit uv.lock. Streamlit Community Cloud picks uv.lock over
+# requirements.txt (higher precedence) and installs main deps only, missing the
+# ml/app extras (torch etc.), which breaks the deployed app.
+uv.lock
 
 # Large generated artifacts — the training library, THOR run outputs, checkpoints, plots.
 # These are regenerated from code + config; never commit them.

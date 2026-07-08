@@ -21,7 +21,12 @@ import sys
 
 # `streamlit run app/app.py` puts app/ on sys.path; make the helper imports
 # (theme/home/core/views) work under any launcher (AppTest, module runners) too.
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+# Also put the repo's src/ on the path so `biconical_inference` imports WITHOUT the
+# package being pip-installed — Streamlit Community Cloud installs from requirements.txt,
+# which brings the third-party deps but does not build this repo's own package.
+_APP_DIR = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, _APP_DIR)
+sys.path.insert(0, os.path.normpath(os.path.join(_APP_DIR, "..", "src")))
 
 import streamlit as st
 

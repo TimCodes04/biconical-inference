@@ -1,6 +1,12 @@
-# Runtime dependencies for the Streamlit app (Streamlit Community Cloud reads this).
-# Mirrors pyproject.toml's core deps + the `ml` and `app` optional extras, because
-# Cloud does NOT install optional-dependency groups from pyproject. Keep in sync.
+# Runtime dependencies for the Streamlit app — Streamlit Community Cloud installs from THIS
+# file (it must be the highest-precedence dependency file present: uv.lock/Pipfile are NOT
+# committed, so this wins over pyproject.toml). Mirrors pyproject's core deps + the `ml` and
+# `app` extras, because Cloud does NOT install optional-dependency groups from pyproject.
+#
+# CPU-only torch wheels (Community Cloud has no GPU) — smaller + faster build than the
+# default CUDA wheel.
+--extra-index-url https://download.pytorch.org/whl/cpu
+
 numpy>=1.26
 scipy>=1.11
 h5py>=3.8
@@ -9,6 +15,7 @@ matplotlib>=3.8
 tqdm>=4.66
 torch>=2.4
 sbi>=0.26
+scikit-learn>=1.3   # posterior_analysis.candidate_solutions uses sklearn.cluster.KMeans
 corner>=2.2
 streamlit>=1.58,<1.60
 plotly>=5.20

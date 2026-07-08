@@ -14,7 +14,9 @@ textColor = "#e6e9ef"
 font = "monospace"
 
 [server]
-enableStaticServing = true
+# No static assets are served (the old deep-field media was removed), so keep this off —
+# avoids the "no static folder" warning on Streamlit Cloud.
+enableStaticServing = false
 
 [browser]
 gatherUsageStats = false
