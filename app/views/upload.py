@@ -221,6 +221,12 @@ def _corner_png_bytes(samp, names, truth):
                             truth=None if truth is None else list(truth))
 
 
+@st.cache_data(show_spinner=False)
+def _fit_png_bytes(vel, x_o, mu_fit, sigma, resid, chi2, ap_kpc):
+    """Cached white-background spectrum-fit PNG (measured + model overlay + residual)."""
+    return plots.fit_png(vel, x_o, mu_fit, sigma, resid, chi2, aperture_kpc=ap_kpc)
+
+
 def render(ctx: core.AppContext):
     prior, names, emulator = ctx.prior, ctx.names, ctx.emulator
     vel, DV, config_path, cond = ctx.vel, ctx.DV, ctx.config_path, ctx.cond
@@ -511,6 +517,13 @@ def render(ctx: core.AppContext):
     else:
         st.plotly_chart(plots.fit_residual_plotly(vel, x_o, mu_fit, sig_med, resid, chi2),
                         width="stretch", config=T.PLOTLY_CONFIG)
+    st.download_button(
+        "Spectrum + fit · PNG (white background)",
+        _fit_png_bytes(vel, x_o, mu_fit, sig_med, resid, chi2, (ap_kpc if two_ap else None)),
+        file_name=f"biconical_{ctx.active_label.lower().replace(' ', '_')}_fit.png",
+        mime="image/png", use_container_width=True,
+        help="Measured spectrum with the model-at-median overlay (±σ band) and residuals, "
+             "on a plain white background.")
 
     st.markdown("<div class='bw-rule'></div>", unsafe_allow_html=True)
     wind_col, degen_col = st.columns([0.55, 0.45], gap="large")

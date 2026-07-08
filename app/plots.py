@@ -533,3 +533,68 @@ def corner_png(samp, names, truth=None, *, dpi=200, max_pts=20000):
     buf = io.BytesIO()
     FigureCanvasAgg(fig).print_png(buf)
     return buf.getvalue()
+
+
+def fit_png(vel, x_o, mu_fit, sigma, resid, chi2, aperture_kpc=None, *, dpi=200):
+    """Measured spectrum + model-at-median overlay (±σ band) with a residual panel,
+    as a PNG on a plain WHITE background. Returns bytes for st.download_button. Mirrors
+    fit_residual_plotly / fit_residual_2ap_plotly: single aperture → 1 column, two-aperture
+    (x_o etc. shaped (A, nbins)) → one column per aperture with its label."""
+    import io
+
+    from matplotlib.backends.backend_agg import FigureCanvasAgg
+    from matplotlib.figure import Figure
+
+    vel = np.asarray(vel, dtype=float)
+    x_o = np.atleast_2d(x_o); mu = np.atleast_2d(mu_fit)
+    sig = np.atleast_2d(sigma); res = np.atleast_2d(resid)
+    A = x_o.shape[0]
+
+    C_DATA, C_MODEL, C_GUIDE, C_RESID = "#111418", "#2b6ca3", "#c2c7cf", "#5b6270"
+    ytop = 1.55
+    for a in range(A):
+        m = np.clip(mu[a], 0.0, None)
+        ytop = max(ytop, float(np.nanmax(m)) * 1.1, float(np.nanmax(x_o[a])) * 1.1)
+
+    fig = Figure(figsize=(5.7 * A + 0.5, 4.3), dpi=dpi, facecolor="white")
+    gs = fig.add_gridspec(2, A, height_ratios=[0.72, 0.28], hspace=0.09, wspace=0.2,
+                          left=0.10 / (1 + 0.5 * (A - 1)), right=0.985, top=0.9, bottom=0.12)
+    for a in range(A):
+        axS = fig.add_subplot(gs[0, a]); axR = fig.add_subplot(gs[1, a], sharex=axS)
+        m = np.clip(mu[a], 0.0, None)
+        up = np.clip(m + sig[a], 0.0, None); lo = np.clip(m - sig[a], 0.0, None)
+        axS.fill_between(vel, lo, up, color=C_MODEL, alpha=0.16, lw=0, label="±1σ model")
+        axS.plot(vel, m, color=C_MODEL, lw=1.5, ls="--", label="model @ median")
+        axS.plot(vel, x_o[a], color=C_DATA, lw=1.4, label="measured")
+        axS.axhline(1.0, color=C_GUIDE, lw=0.9, ls=":")
+        for xk in (0.0, 769.6):                              # MgII K=0, H=+769.6 doublet
+            axS.axvline(xk, color=C_GUIDE, lw=0.8, ls=(0, (1, 2)))
+        axS.set_ylim(-0.05, ytop)
+        axS.tick_params(labelbottom=False)
+
+        r = np.clip(res[a], -5.0, 5.0)
+        axR.axhspan(-1, 1, color=C_GUIDE, alpha=0.35, lw=0)
+        axR.axhline(0.0, color=C_GUIDE, lw=0.9)
+        axR.plot(vel, r, color=C_RESID, lw=1.0)
+        axR.set_ylim(-5, 5)
+        axR.set_xlabel("Δv [km/s]   (K = 0, H = +769.6)", color="black", fontsize=9)
+
+        for ax in (axS, axR):
+            ax.set_xlim(float(vel.min()), float(vel.max()))
+            ax.set_facecolor("white")
+            for sp in ax.spines.values():
+                sp.set_color("black"); sp.set_linewidth(0.8)
+            ax.tick_params(colors="black", labelsize=8)
+        if A > 1:
+            axS.set_title(_ap_title(aperture_kpc, a, A), color="black", fontsize=10)
+        if a == 0:
+            axS.set_ylabel("F / F_cont", color="black", fontsize=9)
+            axR.set_ylabel("resid / σ", color="black", fontsize=9)
+            axS.legend(loc="upper right", fontsize=8, frameon=False)
+
+    tag = "joint χ²ᵣ" if A > 1 else "χ²ᵣ"
+    fig.suptitle(f"measured vs model @ posterior median · {tag} = {chi2:.2f}",
+                 color="#222", fontsize=11)
+    buf = io.BytesIO()
+    FigureCanvasAgg(fig).print_png(buf)
+    return buf.getvalue()
