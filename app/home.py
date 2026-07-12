@@ -22,11 +22,7 @@ from biconical_inference.prior import Prior
 # (label, config path). Two-aperture is the STANDARD and leads the list; a model is
 # only offered once its checkpoint is on disk (available_models filters by _ckpt_ready).
 MODEL_CONFIGS = [
-    ("Two-aperture", "configs/2ap.yaml"),
-    ("Two-aperture · viewing angle set", "configs/5param2ap.yaml"),
-    ("Two-aperture · emission (set i)", "configs/5param2ap_em.yaml"),
-    ("General", "configs/default.yaml"),
-    ("Precise", "configs/5param.yaml"),
+    ("r_vir single-aperture", "configs/rvir6.yaml"),
 ]
 
 _COLS = [1.9, 0.7, 1.15, 1.05, 0.8]      # manifest grid: name · params · apertures · calib · open
@@ -56,9 +52,12 @@ def model_stem(config_path):
 
 
 def _validated(config_path):
-    """True iff this model's calibration plates exist (validate_holdout.py --config <cfg>
-    writes to validation/<config-stem>/)."""
+    """True iff this model's calibration plates exist. scripts/validate_flow.py writes
+    validation/<stem>/sbc.png (the from-scratch flow model); validate_holdout.py writes
+    sbc_ranks.png + tarp_coverage.png (the legacy sbi models)."""
     d = os.path.join("validation", model_stem(config_path))
+    if os.path.exists(os.path.join(d, "sbc.png")):
+        return True
     return all(os.path.exists(os.path.join(d, f))
                for f in ("sbc_ranks.png", "tarp_coverage.png"))
 
@@ -88,15 +87,21 @@ def _manifest_row(config_path):
     elif two_ap:
         name, desc = "Two-aperture", "inner 20 kpc + r_vir · disk column free"
         apertures = f"{ap[0]:.0f} + {ap[-1]:.0f} kpc"
+    elif "disk_logN" in pr.names:            # single-aperture with a FREE disk column = the r_vir flow model
+        name = "r_vir single-aperture"
+        desc = "single r_vir aperture · 6-D wind prior · disk column free · hand-built flow NPE"
+        apertures = "r_vir"
     elif "sigmaran_kms" not in pr.names:
         name, desc = "Precise", "σ_ran fixed · logN / θ / i ≈2× sharper"
         apertures = "r_vir"
     else:
         name, desc = "General", "full 6-D wind prior · σ_ran free"
         apertures = "r_vir"
-    # The original 2-aperture model is the single "standard"; the set-i variant is a peer entry.
+    # The two-aperture model was the original "standard"; the single-aperture r_vir flow (disk free)
+    # is the current sole model, so it reads as standard too.
+    single_flow = (not two_ap) and ("disk_logN" in pr.names)
     return {"name": name, "desc": desc, "params": n_inferred, "apertures": apertures,
-            "standard": two_ap and not incl_set}
+            "standard": (two_ap and not incl_set) or single_flow}
 
 
 def render(avail):

@@ -41,12 +41,39 @@ CONFIG = "configs/default.yaml"
 
 
 # ---- model / data loading (verbatim from the original app.py) ---------------
+class _FlowPosterior:
+    """Adapter making the hand-built NPE (biconical_inference.npe.flow.NPE) present the slice of
+    the sbi-posterior API that run_npe uses — `.posterior_estimator.sample(shape, condition=x)`
+    (and `.sample((n,), x=...)` for the fallback), plus `.to(dev)`. The flow guarantees in-box
+    draws, so run_npe's rejection filter passes them straight through, letting a single-aperture,
+    fixed-instrument flow model drop into the existing inference/UI path unchanged."""
+
+    def __init__(self, npe):
+        self.npe = npe
+        self.posterior_estimator = self          # run_npe calls posterior.posterior_estimator.sample
+
+    def to(self, dev):
+        self.npe.to(dev)
+        return self
+
+    def sample(self, shape, condition=None, x=None, **kw):
+        cond = condition if condition is not None else x   # run_npe passes condition=x.unsqueeze(0)
+        return self.npe.sample(int(shape[0]), cond.reshape(-1))   # (n, dim), guaranteed in prior box
+
+
 @st.cache_resource(show_spinner="Loading model checkpoints…")
 def load_models(config_path=CONFIG):
     cfg = yaml.safe_load(open(config_path))
     prior = Prior.from_config(cfg)
     dev = resolve_device(cfg.get("device", "auto"))
     emulator = load_emulator(cfg["emulator"]["ckpt"], device="cpu")
+    # Backend: our hand-built normalizing-flow NPE (npe.flow) vs the legacy sbi posterior. A flow
+    # model loads via load_npe wrapped in _FlowPosterior; it is single-aperture and NOT instrument-
+    # conditioned (trained at fixed SNR), so conditioned=False, n_ap=1.
+    if cfg["npe"].get("backend") == "flow":
+        from biconical_inference.npe.flow import load_npe
+        npe, _ = load_npe(cfg["npe"]["ckpt"], device=dev)
+        return cfg, prior, emulator, _FlowPosterior(npe), dev, False, 1
     # Load the posterior onto the resolved device AND reconcile its internal
     # device tag: a checkpoint trained on MPS keeps posterior._device='mps', so
     # map_location alone (or no map_location on a non-Mac host) breaks. .to(dev)

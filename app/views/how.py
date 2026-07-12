@@ -60,9 +60,9 @@ digraph G { rankdir=TB; bgcolor="transparent"; pad=0.2;
   a [label="Latin-hypercube design\n@DESIGN@" fillcolor="#1b2029" fontcolor="#e6e9ef"];
   b [label="THOR MCRT  (one transport per design point)\ndisk-on · continuum-only · 300k+ photons" fillcolor="#232935" fontcolor="#e6e9ef"];
   c [label="@LIBNAME@\n@LIBROWS@ TRUE spectra + per-bin MC variance" shape=cylinder fillcolor="#1b2029" fontcolor="#e6e9ef"];
-  d [label="LibrarySimulator\n+ random instrument (LSF, SNR)\n+ real Monte-Carlo noise" fillcolor="#232935" fontcolor="#e6e9ef"];
-  e [label="(θ, x) training pairs\nx = [ @XSPEC@ , @DESC@ ]" fillcolor="#1b2029" fontcolor="#e6e9ef"];
-  f [label="1-D CNN embedding\nspectrum → @EF@ features (+ instrument)" fillcolor="#232935" fontcolor="#e6e9ef"];
+  d [label="@SIMLABEL@" fillcolor="#232935" fontcolor="#e6e9ef"];
+  e [label="@ELABEL@" fillcolor="#1b2029" fontcolor="#e6e9ef"];
+  f [label="@FLABEL@" fillcolor="#232935" fontcolor="#e6e9ef"];
   g [label="Normalizing flow (neural spline flow)\ntrained to maximise  log p(θ | x)" fillcolor="#232935" fontcolor="#e6e9ef"];
   h [label="trained posterior\n@CKPT@" shape=note fillcolor="#17303a" fontcolor="#a7dceb" color="#4aa8c7"];
   v [label="reserved 10%\nNEVER trained on →\nSBC / TARP validation" fillcolor="#241f1c" fontcolor="#e6c3b4" color="#cc7a5a"];
@@ -77,7 +77,7 @@ digraph G { rankdir=TB; bgcolor="transparent"; pad=0.2;
   edge [color="#616b7a" fontname="Helvetica" fontsize=9 fontcolor="#9aa4b2"];
   u  [label="@UPLOAD@\n.npz / .h5 / .csv … (any array names)" fillcolor="#1b2029" fontcolor="#e6e9ef"];
   i1 [label="ingest\nresample → canonical 256-bin grid\ncontinuum-normalise (far-blue window)" fillcolor="#232935" fontcolor="#e6e9ef"];
-  i2 [label="augment with YOUR settings\nx = [ @XSPECSHORT@ , @DESC@ ]" fillcolor="#232935" fontcolor="#e6e9ef"];
+  i2 [label="@I2LABEL@" fillcolor="#232935" fontcolor="#e6e9ef"];
   i3 [label="conditional normalizing flow\namortised — runs in ~milliseconds" fillcolor="#232935" fontcolor="#e6e9ef"];
   i4 [label="sample the posterior\nthousands of parameter sets" fillcolor="#232935" fontcolor="#e6e9ef"];
   o1 [label="parameter table\nmedian + 68 / 95% intervals" fillcolor="#17303a" fontcolor="#a7dceb" color="#4aa8c7"];
@@ -98,7 +98,7 @@ digraph G { rankdir=LR; bgcolor="transparent"; pad=0.2;
   c2 [label="conv (width 5), 32 filters\nSiLU + pool ↓2\n32 × 64" fillcolor="#232935" fontcolor="#e6e9ef"];
   c3 [label="conv (width 5), 32 filters\nSiLU + pool ↓2\n32 × 32" fillcolor="#232935" fontcolor="#e6e9ef"];
   fl [label="flatten 1024\n→ dense 64 → @EF@\nlearned 'fingerprint'" fillcolor="#232935" fontcolor="#e6e9ef"];
-  cat[label="⊕ append settings\n(@DESC@)\n= @CONDDIM@-number summary" fillcolor="#232935" fontcolor="#e6e9ef"];
+  cat[label="@CATLABEL@" fillcolor="#232935" fontcolor="#e6e9ef"];
   s -> c1 -> c2 -> c3 -> fl -> cat;
 }
 """
@@ -108,7 +108,7 @@ digraph G { rankdir=LR; bgcolor="transparent"; pad=0.3; nodesep=0.5; ranksep=0.9
   node [style="filled,rounded" shape=box fontname="Helvetica" fontsize=10 penwidth=1 color="#333a47"];
   edge [fontname="Helvetica" fontsize=9];
   z  [label="base distribution\nplain Gaussian noise\n(@NPAR@ numbers)" fillcolor="#1b2029" fontcolor="#e6e9ef"];
-  t  [label="@NT@ invertible, conditioned\nspline transforms" fillcolor="#232935" fontcolor="#e6e9ef"];
+  t  [label="@NT@ invertible, conditioned\n@WARP@ transforms" fillcolor="#232935" fontcolor="#e6e9ef"];
   th [label="parameters θ\n@PARAMS@" fillcolor="#17303a" fontcolor="#a7dceb" color="#4aa8c7"];
   x  [label="@CONDDIM@-number spectrum +\nsettings summary (CNN)" fillcolor="#1b2029" fontcolor="#e6e9ef"];
   z -> t [label="  INFERENCE: sample z, push forward" color="#4aa8c7" fontcolor="#78c9e3"];
@@ -125,8 +125,8 @@ digraph G { rankdir=LR; bgcolor="transparent"; pad=0.25; nodesep=0.4; ranksep=0.
   edge [color="#616b7a" fontname="Helvetica" fontsize=9 fontcolor="#9aa4b2"];
   in [label="input vector\nsplit: half A · half B" fillcolor="#1b2029" fontcolor="#e6e9ef"];
   keep[label="half A\ncopied through\nUNCHANGED" fillcolor="#232935" fontcolor="#e6e9ef"];
-  net[label="small conditioner net\nreads half A + spectrum x\n→ spline knot positions" fillcolor="#232935" fontcolor="#e6e9ef"];
-  spl[label="monotonic spline\nwarps half B" fillcolor="#232935" fontcolor="#e6e9ef"];
+  net[label="small conditioner net\nreads half A + spectrum x\n→ @WARP@ parameters" fillcolor="#232935" fontcolor="#e6e9ef"];
+  spl[label="@WARP@\nwarps half B" fillcolor="#232935" fontcolor="#e6e9ef"];
   out[label="output\nhalf A · warped B\n(then swap halves)" fillcolor="#17303a" fontcolor="#a7dceb" color="#4aa8c7"];
   x [label="spectrum summary x\n(from the CNN)" fillcolor="#1b2029" fontcolor="#e6e9ef"];
   in -> keep; in -> net; x -> net; net -> spl [label="sets the curve"]; keep -> out; spl -> out;
@@ -222,6 +222,23 @@ def _family_rows(active_path):
 
 def _active_identity(ctx):
     """One-paragraph 'you are here' orientation for the ACTIVE model."""
+    if ctx.cfg.get("npe", {}).get("backend") == "flow":
+        return (
+            "**You are using: r_vir single-aperture — a from-scratch flow model.** One spectrum (the "
+            "r_vir aperture) in, the **full 6-D wind prior** out, including the free disk column "
+            "`logN_disk`. Everything below about the architecture, the coupling trick, amortization, "
+            "the emulator and the validation applies as written — with **three deliberate differences** "
+            "worth stating up front:\n\n"
+            "- **Affine coupling, not a spline flow.** Each transform warps its half with a learned "
+            "**shift + scale** (an affine map), not a rational-quadratic spline. Simpler, and plenty "
+            "expressive when stacked.\n"
+            "- **Trained on the emulator, not on THOR directly.** The `(θ, x)` pairs come from the "
+            "fast emulator plus noise. Because the emulator also predicts a per-bin **σ**, that "
+            "uncertainty is folded into the noise, so emulator error **widens** the posterior rather "
+            "than biasing it.\n"
+            "- **A single fixed instrument.** It's calibrated at SNR≈30, native resolution, so there "
+            "are **no LSF/SNR conditioning inputs** — the flow conditions on the CNN summary alone "
+            "(no appended settings vector).")
     if ctx.multi_aperture and ctx.incl_context:
         ap = ctx.aperture_kpc
         ap_txt = (f"{ap[0]:.0f} kpc + {ap[-1]:.0f} kpc" if ap is not None else "20 kpc + r_vir")
@@ -295,6 +312,21 @@ def render(ctx: core.AppContext):
     N_DESC = 3 if ctx.incl_context else 2
     DESC = "LSF, SNR, cos i" if ctx.incl_context else "LSF, SNR"
     CONDDIM = EF + N_DESC
+    # The from-scratch flow model (configs/rvir6.yaml, backend: flow) differs from the legacy sbi
+    # models in three ways the diagrams + prose below must reflect: it uses AFFINE coupling (not a
+    # spline flow); it is a FIXED-instrument model (no appended LSF/SNR descriptors — the flow
+    # conditions on the CNN summary alone, so N_DESC=0); and it trains on EMULATOR-generated
+    # spectra (the emulator's per-bin σ head WIDENS rather than biases the posterior).
+    is_flow = _npe.get("backend") == "flow"
+    if is_flow:
+        N_DESC, DESC, CONDDIM = 0, "none", EF
+        FLOWKIND = "affine coupling flow (built from scratch)"
+        WARPKIND = "an affine warp — a learned shift and scale"
+        WARPSHORT = "affine (shift + scale)"
+    else:
+        FLOWKIND = f"neural spline flow (`{DE}`)"
+        WARPKIND = "a monotonic rational-quadratic spline"
+        WARPSHORT = "monotonic spline"
     syms = " · ".join(PARAM_META.get(nm, (nm, "", ""))[0] for nm in prior.names)
     n_ch = 2 if ctx.multi_aperture else 1
     libc = cfg.get("library", {})
@@ -320,6 +352,20 @@ def render(ctx: core.AppContext):
     _ap_two = hasattr(_ap, "__len__") and len(_ap) > 1
     ap0 = f"{_ap[0]:.0f}" if _ap_two else "20"
     ap1 = f"{_ap[-1]:.0f}" if _ap_two else "138"
+    # Flow-aware diagram labels: the from-scratch flow uses affine coupling, an emulator-based
+    # simulator, and a fixed instrument, so the training / CNN / flow / coupling diagrams differ.
+    WARP = WARPSHORT
+    if is_flow:
+        SIMLABEL = "Simulator\\nemulator (θ→μ,σ) + fresh noise\\n(fixed instrument, SNR≈30)"
+        ELABEL = "(θ, x) training pairs\\nx = spectrum(256)"
+        FLABEL = f"1-D CNN embedding\\nspectrum → {EF} features"
+        CATLABEL = f"= {EF}-number summary\\n(no settings appended)"
+    else:
+        SIMLABEL = "LibrarySimulator\\n+ random instrument (LSF, SNR)\\n+ real Monte-Carlo noise"
+        _xspec = f"{n_ch} × 256 spectrum channels" if n_ch > 1 else "spectrum(256)"
+        ELABEL = f"(θ, x) training pairs\\nx = [ {_xspec} , {DESC} ]"
+        FLABEL = f"1-D CNN embedding\\nspectrum → {EF} features (+ instrument)"
+        CATLABEL = f"⊕ append settings\\n({DESC})\\n= {CONDDIM}-number summary"
     dot_overview = _fill(_DOT_OVERVIEW, NPAR=D, PARAMS=syms,
                          SPECDESC=(f"{n_ch}-aperture spectra" if n_ch > 1 else "spectrum"))
     dot_training = _fill(
@@ -329,15 +375,16 @@ def render(ctx: core.AppContext):
         LIBNAME=lib_name,
         LIBROWS=(f"{approx}{n_rows:,} ({n_sims:,} runs × {n_los} LOS)"
                  if n_los > 1 else f"{approx}{n_rows:,}"),
-        XSPEC=(f"{n_ch} × 256 spectrum channels" if n_ch > 1 else "spectrum(256)"),
-        DESC=DESC, CKPT=ckpt_name, EF=EF)
+        SIMLABEL=SIMLABEL, ELABEL=ELABEL, FLABEL=FLABEL, CKPT=ckpt_name)
     dot_inference = _fill(
         _DOT_INFERENCE,
         UPLOAD=("your paired aperture spectra" if n_ch > 1 else "your spectrum"),
-        XSPECSHORT=(f"{n_ch}×spectrum" if n_ch > 1 else "spectrum"), DESC=DESC)
-    dot_cnn = _fill(_DOT_CNN, NCH=n_ch, EF=EF, CONDDIM=CONDDIM, DESC=DESC)
-    dot_flow = _fill(_DOT_FLOW_BIDIR, NPAR=D, NT=NT, PARAMS=syms, CONDDIM=CONDDIM)
-    dot_coupling = _DOT_COUPLING
+        I2LABEL=("condition on your spectrum\\nx = spectrum(256)" if is_flow
+                 else f"augment with YOUR settings\\nx = [ "
+                      f"{(str(n_ch) + '×spectrum') if n_ch > 1 else 'spectrum'} , {DESC} ]"))
+    dot_cnn = _fill(_DOT_CNN, NCH=n_ch, EF=EF, CATLABEL=CATLABEL)
+    dot_flow = _fill(_DOT_FLOW_BIDIR, NPAR=D, NT=NT, PARAMS=syms, CONDDIM=CONDDIM, WARP=WARP)
+    dot_coupling = _fill(_DOT_COUPLING, WARP=WARP)
     dot_twoap = _fill(_DOT_TWOAP, AP0=ap0, AP1=ap1)
     dot_emu = _fill(_DOT_EMU, DFULL=DFULL, NCH=n_ch)
 
@@ -427,8 +474,19 @@ def render(ctx: core.AppContext):
                    else "")
                 + f" ({disk_phrase}, continuum-only) → `{lib_name}` "
                 f"({approx}{n_rows:,} true spectra *and* their per-bin Monte-Carlo variance).\n")
-            st.markdown(
-                _sim_bullet +
+            _obs_bullet = (
+                "- **Make training pairs.** An **emulator** (a fast CNN trained on that library, `θ → "
+                "μ, σ`) stands in for THOR. The simulator draws fresh `θ` from the prior, emulates a "
+                "spectrum, and adds **Gaussian noise** sized by the emulator's own σ ⊕ the SNR — a "
+                "new noise draw every time, so the flow marginalises over noise instead of memorising "
+                "it.\n"
+                f"- **Learn the posterior.** A 1-D CNN compresses the "
+                f"{'2 × 256-bin aperture channels' if n_ch > 1 else '256-bin spectrum'} to "
+                f"{EF} features (no instrument settings — this model is fixed-instrument); a "
+                "**normalizing flow** (affine coupling) is trained so that, for every pair, its "
+                "density places high probability on the true parameters. Train once → a single "
+                "checkpoint that is an *amortized* posterior.\n"
+                if is_flow else
                 "- **Make realistic observations.** The `LibrarySimulator` takes each true spectrum "
                 "and applies a **random instrument** (spectral resolution / LSF and SNR drawn from a "
                 "prior) plus the **real MC noise** — so the network learns from spectra that look "
@@ -439,7 +497,9 @@ def render(ctx: core.AppContext):
                 f"features; the {N_DESC} settings ({DESC}) are appended; a **normalizing flow** is "
                 "trained so that, for every pair, the flow's density places high probability on the "
                 "true parameters. Train once (~200 epochs) → a single checkpoint that is an "
-                "*amortized* posterior.\n"
+                "*amortized* posterior.\n")
+            st.markdown(
+                _sim_bullet + _obs_bullet +
                 "- **Hold out 10%.** A reserved test split is never seen in training and is used "
                 "only to **validate calibration** (section 10).")
         else:
@@ -448,11 +508,14 @@ def render(ctx: core.AppContext):
                 "- **Ingest.** Your spectrum (any column names; velocity *or* rest-frame wavelength) "
                 "is flux-conservingly resampled onto the canonical −1300…2100 km/s, 256-bin grid and "
                 "continuum-normalised in the far-blue window — exactly how the library was built.\n"
-                "- **Condition on your settings.** You give the spectral resolution (LSF) and SNR"
-                + (" **and set the viewing angle**" if ctx.incl_context else "")
-                + f"; these become the {N_DESC} appended numbers ({DESC}) so the flow uses the "
-                "*right* posterior for *your* data.\n"
-                "- **Evaluate the flow.** The trained normalizing flow is conditioned on your "
+                + ("- **No settings to set.** Fixed-instrument model (SNR≈30, native resolution): "
+                   "nothing is appended — the flow conditions on the spectrum's CNN summary alone.\n"
+                   if is_flow else
+                   "- **Condition on your settings.** You give the spectral resolution (LSF) and SNR"
+                   + (" **and set the viewing angle**" if ctx.incl_context else "")
+                   + f"; these become the {N_DESC} appended numbers ({DESC}) so the flow uses the "
+                   "*right* posterior for *your* data.\n")
+                + "- **Evaluate the flow.** The trained normalizing flow is conditioned on your "
                 "spectrum and drawn from — thousands of parameter samples in milliseconds (no new "
                 "simulation, no retraining: that's *amortized* inference).\n"
                 "- **Report honestly.** The samples become the parameter table (median + intervals), "
@@ -563,9 +626,13 @@ def render(ctx: core.AppContext):
                 "once — one channel might specialise on the blue wing, another on the doublet gap.\n\n"
                 "After three conv+pool stages the spectrum is a **32-channel × 32-bin** block; a "
                 f"small dense head flattens it (1024 numbers) and squeezes it to **{EF} numbers** — a "
-                f"learned fingerprint of the line shape. Finally the **{N_DESC} settings** ({DESC}) "
-                f"are appended unchanged → the **{EF}+{N_DESC} = {CONDDIM}-number summary** the flow "
-                "conditions on. This is exactly the code's `InstrumentConditionedCNN`.")
+                "learned fingerprint of the line shape. "
+                + (f"That **{EF}-number fingerprint** is the summary the flow conditions on — **no "
+                   "settings are appended** (this model is fixed-instrument). It's the code's "
+                   "`SpectrumCNN`." if is_flow else
+                   f"Finally the **{N_DESC} settings** ({DESC}) are appended unchanged → the "
+                   f"**{EF}+{N_DESC} = {CONDDIM}-number summary** the flow conditions on. This is "
+                   "exactly the code's `InstrumentConditionedCNN`."))
             st.graphviz_chart(dot_cnn, width="stretch")
             st.table([
                 {"stage": "input",
@@ -576,7 +643,9 @@ def render(ctx: core.AppContext):
                 {"stage": "conv 2", "operation": "32 filters · width 5 · SiLU · pool ↓2", "shape (channels × length)": "32 × 64"},
                 {"stage": "conv 3", "operation": "32 filters · width 5 · SiLU · pool ↓2", "shape (channels × length)": "32 × 32"},
                 {"stage": "flatten + dense", "operation": f"1024 → 64 (SiLU) → {EF}", "shape (channels × length)": f"{EF}"},
-                {"stage": "append settings", "operation": f"concatenate ({DESC})", "shape (channels × length)": f"{CONDDIM}"},
+                ({"stage": "output", "operation": f"the {EF}-number fingerprint (no settings appended)", "shape (channels × length)": f"{EF}"}
+                 if is_flow else
+                 {"stage": "append settings", "operation": f"concatenate ({DESC})", "shape (channels × length)": f"{CONDDIM}"}),
             ])
             if n_ch > 1:
                 st.markdown(
@@ -618,18 +687,27 @@ def render(ctx: core.AppContext):
             st.graphviz_chart(dot_flow, width="stretch")
             st.markdown(
                 "Three ingredients give it the needed power and keep it tractable:\n"
-                "- **Spline transforms for flexibility.** Each `Tᵢ` warps its input with a "
-                "*monotonic rational-quadratic spline* — a curve stitched from many small segments "
-                "between 'knots', guaranteed to only ever increase (so it's invertible), able to bend "
-                "into almost any monotonic shape. A few stacked splines can turn the base Gaussian "
-                f"into sharply curved, multi-peaked posteriors. (This is the **neural spline flow**, "
-                f"`{DE}`.)\n"
-                "- **Coupling for invertibility + a cheap Jacobian** (expander ③ below).\n"
+                + ("- **Affine transforms for simplicity.** Each `Tᵢ` warps its input with a learned "
+                   "**shift and scale** (an affine map) — the lightest possible invertible transform. "
+                   "One affine step is weak, but **stacking** several (each conditioned on the "
+                   "spectrum and on the other half of the vector) composes into sharply curved, "
+                   "correlated posteriors. This is a **coupling flow built from scratch** — no spline "
+                   "libraries.\n"
+                   if is_flow else
+                   "- **Spline transforms for flexibility.** Each `Tᵢ` warps its input with a "
+                   "*monotonic rational-quadratic spline* — a curve stitched from many small segments "
+                   "between 'knots', guaranteed to only ever increase (so it's invertible), able to "
+                   "bend into almost any monotonic shape. A few stacked splines can turn the base "
+                   f"Gaussian into sharply curved, multi-peaked posteriors. (This is the **neural "
+                   f"spline flow**, `{DE}`.)\n")
+                + "- **Coupling for invertibility + a cheap Jacobian** (expander ③ below).\n"
                 "- **Conditioning on your spectrum.** Every transform is fed the "
-                f"{CONDDIM}-number CNN summary: small networks ({HF} units wide) read it and *emit "
-                "the spline's knot positions*. So the *same* trained weights produce a *different* "
-                "posterior for every spectrum + settings. That conditioning arrow is the whole trick "
-                "behind **amortized** inference.")
+                f"{CONDDIM}-number CNN summary: small networks ({HF} units wide) read it and "
+                + ("*emit that transform's shift and scale*. So the *same* trained weights produce a "
+                   "*different* posterior for every spectrum. " if is_flow else
+                   "*emit the spline's knot positions*. So the *same* trained weights produce a "
+                   "*different* posterior for every spectrum + settings. ")
+                + "That conditioning arrow is the whole trick behind **amortized** inference.")
 
         with st.expander("③  Inside one transform — the coupling trick (this is the clever bit)"):
             st.markdown(
@@ -663,10 +741,12 @@ def render(ctx: core.AppContext):
         st.markdown("**The posterior network, by the numbers** (for the model you have open)")
         _spec_dim = f"{n_ch}×256" if n_ch > 1 else "256"
         st.table([
-            {"network": "CNN embedding", "maps": f"spectrum ({_spec_dim}) + settings ({N_DESC})  →  summary ({CONDDIM})",
+            {"network": "CNN embedding",
+             "maps": (f"spectrum ({_spec_dim})  →  summary ({CONDDIM})" if is_flow
+                      else f"spectrum ({_spec_dim}) + settings ({N_DESC})  →  summary ({CONDDIM})"),
              "structure": "3 conv+pool stages → dense"},
             {"network": "Normalizing flow", "maps": f"summary ({CONDDIM})  →  posterior over θ ({D}-dim)",
-             "structure": f"{NT} conditioned spline coupling transforms, {HF}-wide"},
+             "structure": f"{NT} conditioned {WARPSHORT} coupling transforms, {HF}-wide"},
             {"network": "Emulator (aside)", "maps": f"θ ({DFULL})  →  spectrum ({_spec_dim})",
              "structure": "dense lift → 4 transpose-conv blocks"},
         ])
@@ -679,14 +759,23 @@ def render(ctx: core.AppContext):
     # ================================================================= 06 =====
     with st.container(border=True, key="bwpanel_how6train"):
         _section_header("06", "Training — how the weights are learned (once, offline)")
-        st.markdown(
+        _data_src = (
+            f"Training shows the network **{NPAIRS:,} examples** of the form `(θ, x)`: a wind `θ` "
+            "drawn from the prior and a spectrum `x` it produces — generated by the **fast emulator** "
+            "(`θ → μ, σ`) with fresh **Gaussian noise** added each draw, its per-bin size set by the "
+            "emulator's own predicted **σ** combined in quadrature with the fixed-instrument SNR. "
+            "Because the noise is re-drawn on every pass, the flow learns to **marginalise over "
+            "noise** rather than memorise one realisation.\n\n"
+            if is_flow else
             f"Training shows the network **{NPAIRS:,} examples** of the form `(θ, x)`: a true wind "
             "`θ` and a spectrum `x` it produced — taken straight from the THOR library, then "
             "observed through a **randomly drawn instrument** (LSF, SNR) with **real Monte-Carlo "
             "photon noise** added. (The pairs are drawn once, up front, but each library spectrum "
             "enters several times — each with its own freshly sampled instrument + noise "
             "realisation — which is why the network generalises across instruments instead of "
-            "memorising one noise draw.)\n\n"
+            "memorising one noise draw.)\n\n")
+        st.markdown(
+            _data_src +
             "The **loss** is plain **maximum-likelihood**. For each pair, push the true `θ` "
             "*backward* through the conditioned flow and read off the density the formula above "
             "gives; the loss is the **negative log of that density**, averaged over the batch:")
@@ -710,13 +799,24 @@ def render(ctx: core.AppContext):
             "the training pairs instead of learning the general mapping.\n\n"
             "The product is a single file of trained weights (`checkpoints/npe*.pt`).")
         st.table([
-            {"knob": "training pairs", "value": f"{NPAIRS:,}", "role": "(θ, x) examples, each with its own instrument + noise draw"},
+            {"knob": "training pairs", "value": f"{NPAIRS:,}",
+             "role": ("(θ, x) examples, each with a fresh noise draw" if is_flow
+                      else "(θ, x) examples, each with its own instrument + noise draw")},
             {"knob": "batch size", "value": f"{BS}", "role": "pairs averaged per gradient step"},
             {"knob": "optimiser / learning rate", "value": f"Adam / {LR:g}", "role": "size of each weight nudge"},
-            {"knob": "density estimator", "value": f"{DE}", "role": f"{NT}-transform neural spline flow, {HF}-wide"},
+            {"knob": "density estimator", "value": ("affine coupling flow" if is_flow else f"{DE}"),
+             "role": f"{NT}-transform {WARPSHORT} coupling flow, {HF}-wide"},
             {"knob": "early stopping", "value": f"patience {PAT}, cap {MAXEP}", "role": "halt when validation loss plateaus"},
         ])
         st.markdown(
+            "**Doesn't training on the emulator bake in its error?** It would — if the emulator only "
+            "predicted a spectrum. But it also predicts a per-bin **uncertainty σ**, and that σ is "
+            "added to the training noise. So wherever the emulator is unsure, the `(θ, x)` pairs are "
+            "noisier there, and the flow responds by making the posterior **wider**, not wrong. "
+            "Emulator error thus **inflates uncertainty rather than biasing the answer** — the honest "
+            "failure mode. (The legacy sbi models instead trained directly on THOR library spectra; "
+            "this from-scratch model trades that for the simplicity of a single fast forward model.)"
+            if is_flow else
             "**Why train on *true* THOR spectra and not the fast emulator?** Any emulator error "
             "would be baked into the training targets and **bias** the posterior. Training the flow "
             "on the real spectra (with their real noise) keeps it honest — the emulator is used only "
@@ -733,9 +833,9 @@ def render(ctx: core.AppContext):
             "this is **amortized** inference (section 04 ④). Answering your upload is literally:\n\n"
             "1. **Ingest** — resample your spectrum onto the canonical 256-bin grid and continuum-"
             "normalise it, exactly as the library was built.\n"
-            f"2. **Summarise** — run the CNN *once* → the {CONDDIM}-number summary, with your "
-            f"{N_DESC} settings ({DESC}) appended.\n"
-            "3. **Sample** — draw thousands of `z`'s from the base Gaussian and push each *forward* "
+            f"2. **Summarise** — run the CNN *once* → the {CONDDIM}-number summary"
+            + (".\n" if is_flow else f", with your {N_DESC} settings ({DESC}) appended.\n")
+            + "3. **Sample** — draw thousands of `z`'s from the base Gaussian and push each *forward* "
             "through the conditioned spline transforms. Each push-through is one parameter set `θ` "
             "drawn from the posterior; thousands of them **are** the posterior.\n"
             "4. **Summarise the samples** — medians + credible intervals, the candidate-solution "
@@ -762,22 +862,34 @@ def render(ctx: core.AppContext):
                 "every posterior. (This is why the base distribution is a plain box-uniform / "
                 "Gaussian: in z there is nothing curved to encode a priori — all the structure is "
                 "learned from the data.)")
-        with st.expander("Instrument conditioning (LSF + SNR)"
-                         + (" + viewing angle" if ctx.incl_context else "")):
-            st.markdown(
-                "Real spectra come from many instruments. Rather than train one model per "
-                "instrument, we train over a **prior of instruments** (LSF 0–200 km/s, SNR 5–100) "
-                "and feed the instrument as those 2 appended inputs, each min-max normalised to "
-                "≈[−1, 1] so the flow sees them on the same scale as everything else. The posterior "
-                "is then valid across that whole range; the canonical (unresolved, SNR≈30) point is "
-                "inside it, so accuracy there is unchanged."
-                + (" **This model appends a 3rd conditioning input — the viewing angle** (as cos i, "
-                   "normalised the same way): you set it before inference and the flow conditions on "
-                   "it, so inclination is *fixed by you* rather than inferred. Mechanically it is "
-                   "identical to the instrument descriptors — the network can't tell the difference "
-                   "between 'settings' and 'a parameter you happen to know'." if ctx.incl_context
-                   else " If a model instead lets you *set* the viewing angle, it simply appends a "
-                   "3rd such number — see the set-i model in section 02."))
+        with st.expander("The instrument — fixed here, or conditioned"):
+            if is_flow:
+                st.markdown(
+                    "This model is trained at a **single fixed instrument** — native resolution and "
+                    "SNR≈30 (the noise floor folded into the training pairs). There are therefore "
+                    "**no LSF/SNR inputs**: the flow conditions on the CNN summary alone, and the "
+                    "Upload tab shows the instrument as fixed rather than as sliders. The trade-off "
+                    "is that a spectrum at a very different SNR/resolution is technically outside its "
+                    "training regime (the χ²/OOD gate still flags a bad fit). *Instrument "
+                    "conditioning* — training over a whole prior of instruments and appending "
+                    "(LSF, SNR) as extra inputs so one model spans them all — is the natural next "
+                    "upgrade (and is what the legacy sbi models do).")
+            else:
+                st.markdown(
+                    "Real spectra come from many instruments. Rather than train one model per "
+                    "instrument, we train over a **prior of instruments** (LSF 0–200 km/s, SNR 5–100) "
+                    "and feed the instrument as those 2 appended inputs, each min-max normalised to "
+                    "≈[−1, 1] so the flow sees them on the same scale as everything else. The "
+                    "posterior is then valid across that whole range; the canonical (unresolved, "
+                    "SNR≈30) point is inside it, so accuracy there is unchanged."
+                    + (" **This model appends a 3rd conditioning input — the viewing angle** (as "
+                       "cos i, normalised the same way): you set it before inference and the flow "
+                       "conditions on it, so inclination is *fixed by you* rather than inferred. "
+                       "Mechanically it is identical to the instrument descriptors — the network "
+                       "can't tell the difference between 'settings' and 'a parameter you happen to "
+                       "know'." if ctx.incl_context
+                       else " If a model instead lets you *set* the viewing angle, it simply appends "
+                       "a 3rd such number — see the set-i model in section 02."))
         with st.expander("The emulator (1-D CNN decoder), in more detail"):
             st.markdown(
                 "The emulator runs the network *forward*: parameters → spectrum, in ~ms. "
@@ -983,8 +1095,12 @@ def render(ctx: core.AppContext):
             {"term": "Receptive field", "in one line": "how much of the velocity axis one deep filter can 'see'; widened by pooling."},
             {"term": "Normalizing flow", "in one line": "invertible transforms that warp simple Gaussian noise into the complex posterior, with exact densities."},
             {"term": "Coupling layer", "in one line": "a flow step that copies half the vector and warps the other half — invertible with a cheap (triangular) Jacobian."},
-            {"term": "Rational-quadratic spline", "in one line": "the flexible, guaranteed-monotonic (invertible) curve each transform applies."},
-            {"term": "Conditioning vector x", "in one line": f"the {CONDDIM}-number input the flow reads: CNN summary ⊕ {DESC}."},
+            ({"term": "Affine coupling", "in one line": "the transform each step applies to its half: a learned shift + scale, invertible by construction with a log-det that's just the sum of the scales."}
+             if is_flow else
+             {"term": "Rational-quadratic spline", "in one line": "the flexible, guaranteed-monotonic (invertible) curve each transform applies."}),
+            {"term": "Conditioning vector x",
+             "in one line": (f"the {CONDDIM}-number CNN summary the flow reads (fixed instrument, no appended settings)."
+                             if is_flow else f"the {CONDDIM}-number input the flow reads: CNN summary ⊕ {DESC}.")},
             {"term": "Inference space z", "in one line": "the transformed coordinates (log v, cos i, …) where the prior is a plain box; all learning happens here."},
             {"term": "Calibration (SBC / TARP)", "in one line": "the proof that stated uncertainties are honest: flat rank histograms and on-diagonal coverage."},
             {"term": "Degeneracy / 'banana'", "in one line": "distinct winds giving near-identical spectra (a_v↔v_max, θ↔i); reported as a ridge, not hidden."},

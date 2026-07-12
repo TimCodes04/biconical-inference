@@ -271,13 +271,23 @@ def render(ctx: core.AppContext):
                                   type=_types, key=f"up_single_{up_ver}", help=_up_help)
             ups = [up]
         c1, c2, c3 = st.columns([1, 1, 1.1], vertical_alignment="bottom")
-        snr_in = c1.number_input("Per-pixel SNR", min_value=1.0, max_value=1000.0,
-                                 value=float(ctx.cfg["npe"].get("obs_noise_snr", 30)), step=1.0,
-                                 help="Conditions the posterior and sets the χ²ᵣ noise budget."
-                                 + (" Both apertures share this instrument." if two_ap else ""))
-        lsf_in = c2.number_input("Instrument LSF FWHM [km/s]", min_value=0.0, max_value=500.0,
-                                 value=0.0, step=5.0,
-                                 help="Spectral resolution; 0 = unresolved on the ~13 km/s grid.")
+        if cond:
+            snr_in = c1.number_input("Per-pixel SNR", min_value=1.0, max_value=1000.0,
+                                     value=float(ctx.cfg["npe"].get("obs_noise_snr", 30)), step=1.0,
+                                     help="Conditions the posterior and sets the χ²ᵣ noise budget."
+                                     + (" Both apertures share this instrument." if two_ap else ""))
+            lsf_in = c2.number_input("Instrument LSF FWHM [km/s]", min_value=0.0, max_value=500.0,
+                                     value=0.0, step=5.0,
+                                     help="Spectral resolution; 0 = unresolved on the ~13 km/s grid.")
+        else:
+            # Fixed-instrument model (the r_vir flow is calibrated at a single instrument, not
+            # instrument-conditioned): don't expose SNR/LSF — the posterior wouldn't respond to them.
+            # Everything is presented at the training instrument (its χ²ᵣ reference + example noise).
+            snr_in = float(ctx.cfg["npe"].get("obs_noise_snr", 30))
+            lsf_in = 0.0
+            c1.markdown(f"<div style='padding-top:4px'><span class='bw-mf-cell'>Fixed instrument · "
+                        f"SNR {snr_in:.0f} · native resolution</span></div>", unsafe_allow_html=True)
+            c2.caption("Calibrated at a single instrument, so SNR/LSF aren't tunable for this model.")
         if c3.button("Load another example" if ex_active else "Load a held-out example",
                      key="ex_btn_console", use_container_width=True,
                      help="A true THOR test spectrum the model never trained on, with its "
