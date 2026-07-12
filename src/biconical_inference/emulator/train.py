@@ -52,15 +52,16 @@ def train(cfg):
 
     best = float("inf")
     for epoch in range(em.get("epochs", 400)):
-        model.train()
-        for z, f in tl:
-            z, f = z.to(device), f.to(device)
+        model.train()                       # training mode (enables dropout/batchnorm if any)
+        for z, f in tl:                     # tl yields shuffled mini-batches (inputs, targets)
+            z, f = z.to(device), f.to(device)   # move this batch to GPU/MPS
             opt.zero_grad()
-            loss = loss_fn(z, f)
+            loss = loss_fn(z,f)
             loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), 5.0)
             opt.step()
-        sched.step()
+
+        sched.step()                        # cosine LR decay, once per epoch
 
         model.eval()
         with torch.no_grad():

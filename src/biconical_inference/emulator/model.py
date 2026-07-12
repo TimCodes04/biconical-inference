@@ -42,12 +42,35 @@ class MLPEmulator(nn.Module):
         return mu
 
 
-class SpectrumEmulator(nn.Module):
-    """MLP lift -> reshape to (latent_ch, 16) -> transpose-conv upsample to 256.
+def up_block(cin, cout):
+    """One upsampling decoder step: a transpose conv that DOUBLES the length and maps
+    `cin` input channels -> `cout` output channels, then a SiLU nonlinearity. Stacking four
+    of these grows the latent 16 -> 32 -> 64 -> 128 -> 256.
 
-    Emits `n_apertures` spectrum channels: (B, 256) when n_apertures==1 (the original
-    single-aperture behavior, bit-compatible), else (B, n_apertures, 256) — the 2-aperture
-    (20 kpc + r_vir) observable shares the same decoder and splits only at the conv head."""
+    TODO(human) — return an nn.Sequential of exactly these two layers, in order:
+      1. nn.ConvTranspose1d(cin, cout, kernel_size=4, stride=2, padding=1)
+         Those three numbers are picked so OUTPUT LENGTH = 2 x INPUT LENGTH. The transpose-conv
+         length rule is:
+             L_out = (L_in - 1)*stride - 2*padding + kernel_size
+         With stride=2, padding=1, kernel_size=4:  (L-1)*2 - 2 + 4 = 2L.  Exactly double.
+      2. nn.SiLU()   # smooth ReLU-like activation, differentiable everywhere
+    """
+    
+    return nn.Sequential(
+        nn.ConvTranspose1d(cin, cout, kernel_size=4, stride=2, padding=1),
+        nn.SiLU()
+    )
+
+
+class SpectrumEmulator(nn.Module):
+    """params z (B, n_params) -> spectrum (B, 256).
+
+    Generates the curve by UPSAMPLING: an MLP 'lift' turns the params into a compact latent
+    shaped (latent_ch channels, length 16); four transpose-conv blocks scatter-and-grow it to
+    length 256; two conv 'heads' read the final features and emit the spectrum mean mu (and,
+    if heteroscedastic, a per-bin log-sigma). n_apertures output channels: (B, 256) when 1
+    (our single-aperture r_vir model), else (B, n_apertures, 256).
+    """
 
     def __init__(self, n_params, n_velbins=256, hidden=256, latent_ch=64,
                  heteroscedastic=False, n_apertures=1):
@@ -56,37 +79,38 @@ class SpectrumEmulator(nn.Module):
         self.heteroscedastic = heteroscedastic
         self.latent_ch = latent_ch
         self.n_apertures = n_apertures
+
+        # (1) LIFT: the only dense part. (B, n_params) -> (B, latent_ch*16), later reshaped to
+        #     (B, latent_ch, 16). This decides the CONTENT of the latent 'image' the decoder paints.
         self.lift = nn.Sequential(
             nn.Linear(n_params, hidden), nn.SiLU(),
             nn.Linear(hidden, latent_ch * 16), nn.SiLU(),
         )
-
-        def block(cin, cout):
-            return nn.Sequential(
-                nn.ConvTranspose1d(cin, cout, kernel_size=4, stride=2, padding=1),
-                nn.SiLU(),
-            )
-
+        # (2) DECODER: four up_blocks. Length doubles each step; channels taper (rich features
+        #     while short, fewer at full res): (latent_ch,16)->(64,32)->(48,64)->(32,128)->(24,256).
         self.decoder = nn.Sequential(
-            block(latent_ch, 64),   # 16 -> 32
-            block(64, 48),          # 32 -> 64
-            block(48, 32),          # 64 -> 128
-            block(32, 24),          # 128 -> 256
+            up_block(latent_ch, 64),   # 16 -> 32
+            up_block(64, 48),          # 32 -> 64
+            up_block(48, 32),          # 64 -> 128
+            up_block(32, 24),          # 128 -> 256
         )
+        # (3) HEADS: a size-5 conv reads the 24 feature channels around each position and emits
+        #     n_apertures channel(s). mu = predicted spectrum; logsig = predicted per-bin log std
+        #     (only if heteroscedastic). padding=2 keeps length 256.
         self.mu_head = nn.Conv1d(24, n_apertures, kernel_size=5, padding=2)
         self.logsig_head = (nn.Conv1d(24, n_apertures, kernel_size=5, padding=2)
                             if heteroscedastic else None)
 
     def _shape(self, y):
-        # (B, A, 256); squeeze the aperture axis for the single-aperture (v1) case
+        # heads emit (B, n_apertures, 256); drop the channel axis for the single-aperture case
         return y.squeeze(1) if self.n_apertures == 1 else y
 
     def forward(self, z):
-        h = self.lift(z).view(z.shape[0], self.latent_ch, 16)
-        h = self.decoder(h)
-        mu = self._shape(self.mu_head(h))
+        h = self.lift(z).view(z.shape[0], self.latent_ch, 16)   # (B, latent_ch, 16)
+        h = self.decoder(h)                                     # (B, 24, 256)
+        mu = self._shape(self.mu_head(h))                       # (B, 256)  single aperture
         if self.heteroscedastic:
-            return mu, self._shape(self.logsig_head(h))
+            return mu, self._shape(self.logsig_head(h))         # (mu, log_sigma)
         return mu
 
 
