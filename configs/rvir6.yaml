@@ -1,0 +1,70 @@
+# Single-aperture (r_vir only) 6-parameter flagship model.
+#
+# Reuses the r_vir channel of the two-aperture library via the derived single-aperture
+# file library_1ap_rvir.h5 (scripts/derive_rvir_library.py slices aperture index 1 of
+# library_2ap.h5). Same 6 free params as configs/2ap.yaml, but ONE aperture (138.1 kpc
+# r_vir) instead of two. All 6 params are inferred (incl included; no context_params).
+library:
+  root: ./runs_2ap
+  out: ./library/library_1ap_rvir.h5    # derived r_vir slice of library_2ap.h5
+  n_sims: 30000
+  method: lhs
+  seed: 1
+  incl_seed: 2
+  n_los: 6
+  n_cont: 300000
+  n_line: 0
+  aperture_kpc: 138.1                    # r_vir only (single aperture)
+  want_mc_var: true
+thor:
+  mode: docker
+  image: thor-ci-python:local
+  thor_bin: thor
+free_params: [logN, theta, av, incl, vexp_kms, disk_logN]
+param_bounds:
+  logN:      [11.0, 16.0]
+  theta:     [15.0, 82.0]
+  av:        [0.5,  2.0]
+  incl:      [0.0,  90.0]
+  vexp_kms:  [50.0, 600.0]
+  disk_logN: [13.0, 16.0]
+fixed:
+  ew: 0.0
+  sigmasrc_kms: 100.0
+  sigmaran_kms: 100.0
+  mass_conservation: true
+  outer_radius_box: 0.4
+  disk_on: true
+  disk_radius_box: 0.04
+  disk_height_box: 0.004
+  disk_tau_dust: 0.0
+  disk_sigma_kms: 50.0
+  source: point
+emulator:
+  arch: cnn
+  hidden: 256
+  latent_ch: 64
+  heteroscedastic: true
+  epochs: 400
+  batch_size: 256
+  lr: 0.001
+  val_frac: 0.1
+  test_frac: 0.1
+  ckpt: ./checkpoints/emulator_rvir6.pt
+npe:
+  backend: flow             # hand-built normalizing-flow NPE (biconical_inference.npe.flow), not sbi
+  density_estimator: nsf
+  embedding_features: 24
+  hidden_features: 128
+  num_transforms: 6
+  train_source: library
+  n_amortized_sims: 400000
+  batch_size: 1024
+  lr: 0.0005
+  stop_after_epochs: 20
+  max_num_epochs: 300
+  instrument_conditioned: true
+  seed: 0
+  obs_noise_snr: 30
+  ckpt: ./checkpoints/npe_rvir6.pt
+device: auto

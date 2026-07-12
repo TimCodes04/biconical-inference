@@ -19,33 +19,59 @@ __all__ = ["SpectrumDataset", "Normalizer", "make_datasets", "library_fingerprin
 
 
 class SpectrumDataset(Dataset):
+    """A torch Dataset is just two answers: "how many rows?" and "give me row i".
+
+    We hold the whole library in memory as two tensors — `z` (the 6 normalized params =
+    the INPUT) and `f` (the 256-bin normalized spectrum = the TARGET) — and hand back one
+    (z_i, f_i) pair at a time. The DataLoader (built in train.py, M2) wraps this to serve
+    shuffled mini-batches: it calls __len__ once, then __getitem__ for each index in a
+    batch and stacks the results into (B, 6) and (B, 256).
+
+    torch.as_tensor avoids a copy when it can; float32 is the standard training precision.
+    """
+
     def __init__(self, z_norm, flux_norm):
-        self.z = torch.as_tensor(z_norm, dtype=torch.float32)
-        self.f = torch.as_tensor(flux_norm, dtype=torch.float32)
+        self.z = torch.as_tensor(z_norm, dtype=torch.float32)      # (N, 6)   inputs
+        self.f = torch.as_tensor(flux_norm, dtype=torch.float32)   # (N, 256) targets
 
     def __len__(self):
         return self.z.shape[0]
 
     def __getitem__(self, i):
-        return self.z[i], self.f[i]
+        return self.z[i], self.f[i]      # one (input, target) pair
 
 
 class Normalizer:
-    """Holds the input/output normalization stats (serialized into the checkpoint)."""
+    """Turns raw quantities into network-friendly ones, and back. TWO normalizations:
+
+    * PARAMS z -> [-1, 1] via the PRIOR BOUNDS (z_lo, z_hi), NOT the data's min/max — a
+      fixed, known map identical at train + inference, and the coordinate the NPE prior
+      lives in.  (`norm_z`, your task below.)
+    * FLUX -> standardized PER BIN: (f - per-bin mean) / per-bin std, so all 256 outputs
+      share one scale and the loss isn't dominated by high-variance bins. Stats are fit on
+      the TRAIN split only (no leakage) and stored in the checkpoint (self-describing).
+    """
 
     def __init__(self, z_lo, z_hi, flux_mean, flux_std):
-        self.z_lo = np.asarray(z_lo, dtype=np.float32)
-        self.z_hi = np.asarray(z_hi, dtype=np.float32)
-        self.flux_mean = np.asarray(flux_mean, dtype=np.float32)
-        self.flux_std = np.asarray(flux_std, dtype=np.float32)
+        self.z_lo = np.asarray(z_lo, dtype=np.float32)            # (6,)   prior lower bounds (z-space)
+        self.z_hi = np.asarray(z_hi, dtype=np.float32)            # (6,)   prior upper bounds
+        self.flux_mean = np.asarray(flux_mean, dtype=np.float32)  # (256,) per-bin train mean
+        self.flux_std = np.asarray(flux_std, dtype=np.float32)    # (256,) per-bin train std
 
     def norm_z(self, z):
-        return 2.0 * (z - self.z_lo) / (self.z_hi - self.z_lo) - 1.0
+        
+        z01 = (z - self.z_lo)/(self.z_hi - self.z_lo)
+        return 2 * z01 - 1
+
+        
 
     def norm_flux(self, f):
+        """Standardize the spectrum per bin. This is the 'shift then scale' pattern your
+        norm_z mirrors — just with a different shift (mean) and scale (std)."""
         return (f - self.flux_mean) / self.flux_std
 
     def denorm_flux(self, fn):
+        """Invert norm_flux: standardized network output -> physical F/F_cont."""
         return fn * self.flux_std + self.flux_mean
 
     def to_dict(self):
@@ -68,9 +94,15 @@ def make_datasets(library_path, val_frac=0.1, test_frac=0.1, seed=0):
     z = lib["params_z"].astype(np.float32)
     flux = lib["spectra"].astype(np.float32)
     run_id = np.asarray(lib["run_id"])
-    is_v2 = flux.ndim == 3
-    fp_run = run_id if is_v2 else None
-    fp_ap = lib.get("aperture_kpc") if is_v2 else None
+    # Run-correlation (multi-LOS) is a property of the ROWS, not of how many apertures the
+    # flux carries. A single-aperture r_vir SLICE of a v2 library (2-D spectra, but real
+    # run_id + schema_version 2) is still run-correlated, so fold run_id + aperture into the
+    # fingerprint whenever schema_version>=2 — matching splits.reserve()'s run-level split.
+    # True v1 (schema<2) stays params-only; native 2-aperture is unchanged. (Was gated on
+    # flux.ndim==3, which wrongly tied the split key to the aperture count.)
+    is_multilos = int(lib.get("schema_version", -1)) >= 2
+    fp_run = run_id if is_multilos else None
+    fp_ap = lib.get("aperture_kpc") if is_multilos else None
     fp = library_fingerprint(z, fp_run, fp_ap)
 
     n = z.shape[0]
