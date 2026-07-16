@@ -26,7 +26,7 @@ from biconical_inference.device import resolve_device
 from biconical_inference.emulator.predict import load_emulator
 from biconical_inference.npe.flow import load_npe
 from biconical_inference.npe.priors import build_prior
-from biconical_inference.npe.simulator import LibrarySimulator, Simulator
+from biconical_inference.npe.simulator import CubeLibrarySimulator, LibrarySimulator, Simulator
 from biconical_inference.prior import Prior
 
 
@@ -53,7 +53,10 @@ def main():
     # here for a library-trained model is exactly the bug that made calibrated models look
     # overconfident (emulator-self cov68 ~0.58-0.67 vs library-self ~0.68); see MODEL_VALIDATION.md §8.
     train_source = cfg["npe"].get("train_source", "emulator")
-    if train_source == "library":
+    if train_source == "library_cube":
+        sim = CubeLibrarySimulator(cfg, seed=123)
+        print("[validate] SBC generator = LIBRARY CUBES (raw THOR, no added noise)", flush=True)
+    elif train_source == "library":
         sim = LibrarySimulator(cfg, snr=cfg["npe"].get("obs_noise_snr", 30), seed=123)
         print(f"[validate] SBC generator = LIBRARY (real THOR, train_source=library)", flush=True)
     else:

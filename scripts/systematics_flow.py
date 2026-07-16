@@ -49,7 +49,12 @@ def _lib_names(lib):
     return [n.decode() if isinstance(n, bytes) else str(n) for n in lib["param_names"]]
 
 
-def load_reserved(cfg):
+def _is_cube(cfg):
+    """A spaxel-cube model conditions on raw library cubes (no observation model at all)."""
+    return cfg["npe"].get("train_source") == "library_cube"
+
+
+def load_reserved(cfg, return_mask=False):
     """The reserved held-out THOR rows for this model: (z_test, flux_test, prior).
 
     Selects the SAME test set the model was validated on. The split is keyed run-level on
@@ -62,6 +67,11 @@ def load_reserved(cfg):
     selects which library columns are returned as z, by NAME; the optional `npe.av_slice` further
     restricts to a_v~1 rows so the sliced model is scored only where it is valid. The reserved-test
     fingerprint is always computed on the FULL z, so slicing/column-selection can't disturb it.
+
+    The split file is the CONFIG's `splits:` key when present (each library family has its own
+    reserved set; the default file belongs to the original 2ap row set). With return_mask=True the
+    row mask into the full library is also returned, so cube models can fetch only the reserved
+    /cubes rows from HDF5 instead of materializing the multi-GB dataset.
     """
     prior = Prior.from_config(cfg)
     lib = load_library(cfg["library"]["out"])
@@ -75,13 +85,16 @@ def load_reserved(cfg):
     col = [lib_names.index(nm) for nm in prior.names]   # model-order library columns (by name)
     vm = valid_mask(flux_all)                            # drop the ~normalization-artifact rows
     vm_row = vm if vm.ndim == 1 else vm.all(axis=1)
-    mask = splits.test_mask(z_full, run_id=run_id, aperture_kpc=ap_kpc) & vm_row  # RESERVED rows
+    mask = splits.test_mask(z_full, run_id=run_id, aperture_kpc=ap_kpc,
+                            path=cfg.get("splits", splits.DEFAULT_PATH)) & vm_row  # RESERVED rows
 
     sl = cfg["npe"].get("av_slice")                      # score the a_v~1 model on a_v~1 rows only
     if sl is not None:
         av_col = lib_names.index("av")
         mask &= (z_full[:, av_col] >= float(sl[0])) & (z_full[:, av_col] <= float(sl[1]))
 
+    if return_mask:
+        return z_full[mask][:, col], flux_all[mask], prior, mask
     return z_full[mask][:, col], flux_all[mask], prior
 
 
@@ -122,16 +135,28 @@ def _score_rows(npe, prior, dev, z_true, x_arr, n_post):
 
 
 def collect(cfg, n_sims=800, n_post=1000, seed=0):
-    """REAL-THOR path: score the flow on the reserved held-out THOR spectra, observed at the
-    fixed training instrument (SNR, native resolution). Returns the diagnostics dict."""
+    """REAL-THOR path: score the flow on the reserved held-out THOR rows. 1-D models observe
+    the spectra at the fixed training instrument (SNR, native resolution); cube models score
+    the raw reserved CUBES exactly as stored (no observation model — matching training).
+    Returns the diagnostics dict."""
+    import h5py
+
     dev = resolve_device(cfg.get("device", "auto"))
-    z_test, flux_test, prior = load_reserved(cfg)
+    z_test, flux_test, prior, mask = load_reserved(cfg, return_mask=True)
     npe, _ = load_npe(cfg["npe"]["ckpt"], device=dev)
-    inst = Instrument.canonical(snr_per_pixel=cfg["npe"].get("obs_noise_snr", 30))
     rng = np.random.default_rng(seed)
     m = min(n_sims, z_test.shape[0])
     pick = rng.choice(z_test.shape[0], size=m, replace=False)
-    x_arr = np.stack([observe_obs(flux_test[i], inst, rng) for i in pick])   # (m, 256) noised THOR
+    if _is_cube(cfg):
+        rows = np.nonzero(mask)[0][pick]              # picked rows, in full-library indexing
+        order = np.argsort(rows)                       # h5py wants increasing indices
+        with h5py.File(cfg["library"]["out"], "r") as f:
+            x_sorted = f["cubes"][np.sort(rows)].astype(np.float32)
+        x_arr = np.empty_like(x_sorted)
+        x_arr[order] = x_sorted                        # back to pick order
+    else:
+        inst = Instrument.canonical(snr_per_pixel=cfg["npe"].get("obs_noise_snr", 30))
+        x_arr = np.stack([observe_obs(flux_test[i], inst, rng) for i in pick])  # (m, 256)
     return _score_rows(npe, prior, dev, z_test[pick], x_arr, n_post)
 
 
@@ -189,13 +214,16 @@ def collect_libself(cfg, n_sims=800, n_post=1000, seed=0):
     the calibration the flow MUST nail if its architecture + optimization are adequate. Unlike the
     emulator-self path (a DIFFERENT generator) or held-out THOR (generalization), miscalibration HERE
     isolates the model itself: it is the decisive test for `is the flow underpowered / buggy?`."""
-    from biconical_inference.npe.simulator import LibrarySimulator
+    from biconical_inference.npe.simulator import CubeLibrarySimulator, LibrarySimulator
 
     dev = resolve_device(cfg.get("device", "auto"))
     prior = Prior.from_config(cfg)
     npe, _ = load_npe(cfg["npe"]["ckpt"], device=dev)
-    sim = LibrarySimulator(cfg, snr=cfg["npe"].get("obs_noise_snr", 30), seed=seed + 11)
-    theta, x = sim.sample(n_sims)                          # (n,dim) z-space train labels, (n,256) noised
+    if _is_cube(cfg):
+        sim = CubeLibrarySimulator(cfg, seed=seed + 11)    # raw train cubes, no added noise
+    else:
+        sim = LibrarySimulator(cfg, snr=cfg["npe"].get("obs_noise_snr", 30), seed=seed + 11)
+    theta, x = sim.sample(n_sims)                          # (n,dim) z-space train labels
     return _score_rows(npe, prior, dev, theta.numpy(), x.numpy(), n_post)
 
 
@@ -394,9 +422,14 @@ def main():
     cfg = yaml.safe_load(open(args.config))
     if args.npe_ckpt:                                    # A/B: score a different flow, same reserved rows
         cfg["npe"]["ckpt"] = args.npe_ckpt
+    if _is_cube(cfg) and args.self_path in ("emulator", "both"):
+        # A cube model has no emulator; its only meaningful self-reference is its own
+        # training distribution (the library cubes).
+        print("[sys] cube model: emulator-self is undefined -> using --self library")
+        args.self_path = "library"
 
     z_test, _, _ = load_reserved(cfg)
-    rec = splits.load()
+    rec = splits.load(cfg.get("splits", splits.DEFAULT_PATH))
     print(f"[sys] reserved held-out THOR: {z_test.shape[0]} valid rows "
           f"(persisted n_test={rec['n_test'] if rec else '?'}, run_level={rec['run_level'] if rec else '?'})")
 
