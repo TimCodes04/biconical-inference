@@ -113,5 +113,71 @@ def simulate_multi(params, rundir, runner, n_cont=300_000, n_line=0, incls=None,
     return out
 
 
+def simulate_cube(params, rundir, runner, n_cont=300_000, n_line=0, incls=None,
+                  extent_kpc=125.0, nx=24, vel_rebin=1, normalize=True, want_mc_var=True):
+    """Spaxel-cube forward model: ONE THOR transport peeled to K inclinations, each
+    histogrammed into an (nx, nx, nvel) IFU cube PLUS the 1-D r_vir aperture spectrum
+    (the same photons, aperture-integrated — kept so the cube model can be A/B'd against
+    the 1-D NPE on identical transports at zero extra THOR cost).
+
+    `params` must NOT contain 'incl' (supplied via `incls`, as in simulate_multi).
+    Both observables are normalized by the SAME per-LOS r_vir far-blue continuum level,
+    so cube cells are surface brightness in units of the total continuum (off-center
+    spaxels have no continuum of their own to normalize by).
+
+    Returns dict: v, cube (K,nx,nx,nvel), [cube_mc_var], f (K,1,nbins), f_raw, continuum
+    (K,1), [mc_var (K,1,nbins)], incl_deg (K,), aperture_kpc (1,), extent_kpc, nx,
+    vel_rebin, params. Returns None if any subrun failed.
+    """
+    if incls is None:
+        raise ValueError("simulate_cube requires `incls` (the K peel inclinations)")
+    incls = list(incls)
+    os.makedirs(rundir, exist_ok=True)
+    rundir_thor = runner.to_thor_path(rundir)
+
+    p_run = {**params, "incls": incls}
+    for source in cfg.sources_for(p_run):
+        n = n_cont if source == "cont" else n_line
+        conf = cfg.make_conf(p_run, rundir_thor, source, n)
+        label = f"{os.path.basename(rundir)}/{source}"
+        if not run_subrun(runner, os.path.join(rundir, source), conf, label, n_los=len(incls)):
+            return None
+
+    apertures = np.asarray([R_VIR_KPC])
+    grid = extract.peel_grid(rundir, p_run, n_cont, n_line, incls, apertures,
+                             want_var=want_mc_var)
+    f_raw, mc_var = grid if want_mc_var else (grid, None)
+    f_raw = np.asarray(f_raw, dtype=float)                      # (K, 1, nbins)
+    cube_res = extract.peel_cube(rundir, p_run, n_cont, n_line, incls,
+                                 extent_kpc=extent_kpc, nx=nx, vel_rebin=vel_rebin,
+                                 want_var=want_mc_var)
+    cube, cube_var = cube_res if want_mc_var else (cube_res, None)
+
+    K = f_raw.shape[0]
+    cont = np.ones((K, 1))
+    f = f_raw.copy()
+    if normalize:
+        for k in range(K):
+            c = extract.continuum_level(f_raw[k, 0], VELOCITY)
+            cont[k, 0] = c
+            if c > 0:
+                f[k] = f_raw[k] / c
+                cube[k] = cube[k] / c
+                if cube_var is not None:
+                    cube_var[k] = cube_var[k] / c ** 2
+
+    out = {
+        "v": VELOCITY, "cube": cube, "f": f, "f_raw": f_raw, "continuum": cont,
+        "n_cont": n_cont, "n_line": n_line,
+        "incl_deg": np.asarray(incls, dtype=float), "aperture_kpc": apertures,
+        "extent_kpc": float(extent_kpc), "nx": int(nx), "vel_rebin": int(vel_rebin),
+        "params": dict(params),
+    }
+    if want_mc_var:
+        out["mc_var"] = np.asarray(mc_var, dtype=float)
+        out["cube_mc_var"] = np.asarray(cube_var, dtype=float)
+    return out
+
+
 # Re-export the canonical grid for convenience.
-__all__ = ["simulate", "simulate_multi", "VELOCITY", "NBINS_PEEL"]
+__all__ = ["simulate", "simulate_multi", "simulate_cube", "VELOCITY", "NBINS_PEEL"]

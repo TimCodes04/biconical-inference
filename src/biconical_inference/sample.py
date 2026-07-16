@@ -26,7 +26,7 @@ import yaml
 
 from .prior import Prior
 from .thor_sim import ThorRunner
-from .thor_sim.simulate import simulate_multi
+from .thor_sim.simulate import simulate_cube, simulate_multi
 
 
 def build_runner(thor_cfg, mount_host):
@@ -46,16 +46,26 @@ def _save_marker_atomic(path, res, transport_params):
 
     The marker holds every (K LOS x A aperture) spectrum from one transport run, plus the
     K peel inclinations and the A aperture radii — incl is per-row, the rest of the params
-    are the shared transport dict. The larger payload widens the corrupt-on-preempt window,
+    are the shared transport dict. In cube mode it additionally holds the (K, nx, nx, nvel)
+    spaxel cube + its MC variance (float32, COMPRESSED — halo cubes are zero-heavy, and the
+    cube dwarfs the spectra). The larger payload widens the corrupt-on-preempt window,
     so the write must be atomic: a half-written file would pass the resume check and be lost
     by the aggregator. (np.savez to a file handle avoids the .npz extension rewrite.)"""
+    arrays = dict(v=res["v"], f=res["f"], f_raw=res["f_raw"], continuum=res["continuum"],
+                  mc_var=res.get("mc_var", np.zeros_like(res["f"])),
+                  incl_deg=res["incl_deg"], aperture_kpc=res["aperture_kpc"],
+                  params=np.array(json.dumps(transport_params)))
+    save = np.savez
+    if "cube" in res:
+        arrays.update(cube=res["cube"].astype(np.float32),
+                      cube_mc_var=res.get("cube_mc_var",
+                                          np.zeros_like(res["cube"])).astype(np.float32),
+                      extent_kpc=np.float64(res["extent_kpc"]), nx=np.int64(res["nx"]),
+                      vel_rebin=np.int64(res["vel_rebin"]))
+        save = np.savez_compressed
     tmp = path + ".tmp"
     with open(tmp, "wb") as fh:
-        np.savez(fh,
-                 v=res["v"], f=res["f"], f_raw=res["f_raw"], continuum=res["continuum"],
-                 mc_var=res.get("mc_var", np.zeros_like(res["f"])),
-                 incl_deg=res["incl_deg"], aperture_kpc=res["aperture_kpc"],
-                 params=np.array(json.dumps(transport_params)))
+        save(fh, **arrays)
     os.replace(tmp, path)
 
 
@@ -119,10 +129,22 @@ def run_design(cfg, shard=(0, 1)):
         # alone can't, because we delete the THOR HDF5 right after extraction.
         if os.path.exists(os.path.join(rundir, "spectrum.npz")):
             continue
-        res = simulate_multi(p, rundir, runner,
-                             n_cont=lib.get("n_cont", 300_000), n_line=lib.get("n_line", 0),
-                             incls=incl_design[i], apertures_kpc=apertures,
-                             want_mc_var=lib.get("want_mc_var", True))
+        # Cube mode (library.cube: {extent_kpc, nx, vel_rebin}): spaxel cubes + the fixed
+        # r_vir 1-D channel; the aperture list is ignored (r_vir is built in).
+        cube_cfg = lib.get("cube")
+        if cube_cfg:
+            res = simulate_cube(p, rundir, runner,
+                                n_cont=lib.get("n_cont", 300_000), n_line=lib.get("n_line", 0),
+                                incls=incl_design[i],
+                                extent_kpc=float(cube_cfg.get("extent_kpc", 125.0)),
+                                nx=int(cube_cfg.get("nx", 24)),
+                                vel_rebin=int(cube_cfg.get("vel_rebin", 1)),
+                                want_mc_var=lib.get("want_mc_var", True))
+        else:
+            res = simulate_multi(p, rundir, runner,
+                                 n_cont=lib.get("n_cont", 300_000), n_line=lib.get("n_line", 0),
+                                 incls=incl_design[i], apertures_kpc=apertures,
+                                 want_mc_var=lib.get("want_mc_var", True))
         rec = {"id": run_id, "index": i, "params": p, "n_los": n_los,
                "status": "ok" if res is not None else "failed"}
         with open(manifest_path, "a") as f:

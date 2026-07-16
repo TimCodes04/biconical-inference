@@ -117,6 +117,52 @@ def peel_grid(rundir, p, n_cont, n_line, incls, apertures_kpc, want_var=False):
     return (f, var) if want_var else f
 
 
+def cube_bin_edges(extent_kpc, nx, vel_rebin=1):
+    """Bin edges for the canonical spaxel cube: square spatial grid (nx bins per side over
+    [-extent, +extent] kpc in the image plane) x the canonical velocity grid coarsened by an
+    integer factor. Coarsening SUBSAMPLES the canonical BIN_EDGES (invariant #3: the canonical
+    grid stays the single source of truth — a rebinned cube sums exact canonical bins)."""
+    if NBINS_PEEL % vel_rebin:
+        raise ValueError(f"vel_rebin={vel_rebin} must divide NBINS_PEEL={NBINS_PEEL}")
+    uv_edges = np.linspace(-extent_kpc, extent_kpc, nx + 1)
+    return uv_edges, BIN_EDGES[::vel_rebin]
+
+
+def peel_cube(rundir, p, n_cont, n_line, incls, extent_kpc, nx, vel_rebin=1, want_var=False):
+    """Composed spaxel cubes for K lines of sight, from ONE run: the peel photon list
+    histogrammed over (u, v, velocity) instead of aperture-cut — what an IFU delivers.
+
+    incls      : K inclinations [deg], aligned to THOR's lines_of_sight order.
+    extent_kpc : half-width of the square field of view; photons outside are dropped.
+    nx         : spaxels per side (bin width = 2*extent_kpc/nx).
+    vel_rebin  : integer coarsening of the canonical velocity grid (256 -> 256/vel_rebin).
+
+    Returns cube (K, nx, nx, nvel) in continuum units (NOT yet /F_cont) — axis order
+    (u, v, vel) with u along e_u (the projected wind axis) — and, if want_var, a matching
+    per-cell MC variance (sum of squared weights). Off-center spaxels hold only scattered
+    photons (the emission halo); the point source's direct light lands in the central spaxel.
+    """
+    incls = list(incls)
+    K = len(incls)
+    uv_edges, vel_edges = cube_bin_edges(extent_kpc, nx, vel_rebin)
+    nvel = vel_edges.size - 1
+    cube = np.zeros((K, nx, nx, nvel))
+    var = np.zeros((K, nx, nx, nvel)) if want_var else None
+    edges = (uv_edges, uv_edges, vel_edges)
+    for source, s in composition_scales(p, n_cont, n_line).items():
+        path = os.path.join(rundir, source, "output", "peel", "data.h5")
+        with h5py.File(path, "r") as hf:
+            for k in range(K):
+                pos, wp, velp = _read_peel(hf, _los_group(k, K))
+                _, e_u, e_v, _ = image_basis(incls[k])
+                dx = (pos - 0.5) * BOXSIZE_KPC
+                sample = (dx @ e_u, dx @ e_v, velp)
+                cube[k] += np.histogramdd(sample, bins=edges, weights=wp * s)[0]
+                if want_var:
+                    var[k] += np.histogramdd(sample, bins=edges, weights=(wp * s) ** 2)[0]
+    return (cube, var) if want_var else cube
+
+
 def peel_mc_variance(rundir, p, n_cont, n_line, rmax_kpc=R_VIR_KPC):
     """Per-bin Monte-Carlo variance estimate (sum of squared weights per bin),
     on the canonical grid. Useful as heteroscedastic label noise for the emulator
