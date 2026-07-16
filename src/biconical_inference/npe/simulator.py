@@ -113,6 +113,70 @@ class LibrarySimulator:
                 torch.as_tensor(x, dtype=torch.float32))
 
 
+class CubeLibrarySimulator:
+    """(theta, x) pairs where x is a REAL library spaxel CUBE — no added noise at all.
+
+    The spaxel model trains on raw THOR output (user decision): the cube's MC noise is the
+    only stochasticity, baked into each stored row, so unlike LibrarySimulator nothing is
+    re-drawn per call. Reserved rows are excluded via the family's OWN split file (the
+    config's `splits:` key — a fresh design never shares splits/reserved_test.json), and
+    the quality mask drops normalization-artifact rows exactly as in the 1-D path.
+
+    Cubes are held in RAM as float16 (a 54k-row 24x24x64 training set is ~4 GB; float32
+    would double it) and returned as float32 batches. sample(n) draws rows with
+    replacement for interface compatibility; epochs(), used by the cube trainer, yields
+    the unique training rows instead — with no fresh noise, duplicating rows inside one
+    epoch adds nothing.
+    """
+
+    def __init__(self, cfg, seed=0):
+        import h5py
+
+        from .. import splits
+        from ..library import load_library
+        from ..prior import Prior
+        from ..quality import valid_mask
+
+        path = cfg["library"]["out"]
+        lib = load_library(path)                              # small fields; cubes stay lazy
+        if not lib.get("has_cubes"):
+            raise ValueError(f"{path} has no /cubes — generate with library.cube set (v3)")
+        z_full = lib["params_z"].astype(np.float32)
+        lib_names = [n.decode() if isinstance(n, bytes) else str(n) for n in lib["param_names"]]
+
+        prior = Prior.from_config(cfg)
+        col = [lib_names.index(nm) for nm in prior.names]
+
+        vm = valid_mask(lib["spectra"].astype(np.float32))    # r_vir 1-D channel flags the row
+        vm_row = vm if vm.ndim == 1 else vm.all(axis=1)
+        split_path = cfg.get("splits", splits.DEFAULT_PATH)
+        keep = (~splits.test_mask(z_full, run_id=lib.get("run_id"),
+                                  aperture_kpc=lib.get("aperture_kpc"),
+                                  path=split_path)) & vm_row
+        with h5py.File(path, "r") as f:
+            self.cubes = f["cubes"][:].astype(np.float16)[keep]   # (M, nx, nx, nvel)
+        self.z = z_full[keep][:, col]
+        self.cube_shape = tuple(self.cubes.shape[1:])
+        self.cube_meta = {"extent_kpc": lib["cube_extent_kpc"], "nx": lib["cube_nx"],
+                          "vel_rebin": lib["cube_vel_rebin"]}
+        self.rng = np.random.default_rng(seed)
+        print(f"[cubesim] {self.z.shape[0]} train rows  cube {self.cube_shape}  "
+              f"params={prior.names}  (no added noise)", flush=True)
+
+    def sample(self, n):
+        """n rows with replacement (LibrarySimulator-compatible interface)."""
+        idx = self.rng.integers(0, self.z.shape[0], size=n)
+        return (torch.as_tensor(self.z[idx], dtype=torch.float32),
+                torch.as_tensor(self.cubes[idx], dtype=torch.float32))
+
+    def all_rows(self):
+        """theta (M, dim) float32 and x (M, nx, nx, nvel) float16, in a fresh shuffled
+        order — the cube trainer's per-epoch dataset (convert x per batch, not here)."""
+        order = self.rng.permutation(self.z.shape[0])
+        return (torch.as_tensor(self.z[order], dtype=torch.float32),
+                torch.as_tensor(self.cubes[order]))
+
+
 def _apply_lsf_batch(mu, lsf_fwhm_kms, dv_kms, quantum=0.05):
     """Per-row Gaussian LSF (instrument line-spread) on a (N, nbins) batch, vectorized by
     grouping rows with near-equal kernel width. Kept for the app's χ²-gate / candidate refit

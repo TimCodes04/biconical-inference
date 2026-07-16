@@ -116,18 +116,22 @@ def main():
 
     ap = argparse.ArgumentParser(description="reserve + persist the 10% test split")
     ap.add_argument("--config", default="configs/default.yaml")
-    ap.add_argument("--out", default=DEFAULT_PATH)
+    ap.add_argument("--out", default=None,
+                    help="split file (default: the config's `splits:` key, else "
+                         f"{DEFAULT_PATH}). A NEW library family must use its own file — "
+                         "the default belongs to the original 2ap row set.")
     args = ap.parse_args()
     cfg = yaml.safe_load(open(args.config))
+    out = args.out or cfg.get("splits", DEFAULT_PATH)
     lib = load_library(cfg["library"]["out"])
     # Run-level split for a multi-LOS (v2) library; row-level for legacy v1 (run_id is the
     # per-row identity there, so run-level reduces to row-level).
     run_id = lib.get("run_id") if int(lib.get("schema_version", -1)) >= 2 else None
     rec = reserve(lib["params_z"].astype(np.float32), run_id=run_id,
-                  aperture_kpc=lib.get("aperture_kpc"), path=args.out,
-                  test_frac=cfg["emulator"].get("test_frac", TEST_FRAC))
+                  aperture_kpc=lib.get("aperture_kpc"), path=out,
+                  test_frac=cfg.get("emulator", {}).get("test_frac", TEST_FRAC))
     kind = "runs" if rec["run_level"] else "rows"
-    print(f"[splits] reserved {rec['n_test']}/{rec['n_rows']} rows ({kind}-level) for TESTING -> {args.out}")
+    print(f"[splits] reserved {rec['n_test']}/{rec['n_rows']} rows ({kind}-level) for TESTING -> {out}")
     print(f"[splits] library_hash={rec['library_hash'][:16]}  seed={rec['seed']}  test_frac={rec['test_frac']}")
 
 

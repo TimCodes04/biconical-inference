@@ -20,6 +20,7 @@ import argparse
 import json
 import os
 import shutil
+import time
 
 import numpy as np
 import yaml
@@ -131,6 +132,7 @@ def run_design(cfg, shard=(0, 1)):
             continue
         # Cube mode (library.cube: {extent_kpc, nx, vel_rebin}): spaxel cubes + the fixed
         # r_vir 1-D channel; the aperture list is ignored (r_vir is built in).
+        t0 = time.time()
         cube_cfg = lib.get("cube")
         if cube_cfg:
             res = simulate_cube(p, rundir, runner,
@@ -146,7 +148,9 @@ def run_design(cfg, shard=(0, 1)):
                                  incls=incl_design[i], apertures_kpc=apertures,
                                  want_mc_var=lib.get("want_mc_var", True))
         rec = {"id": run_id, "index": i, "params": p, "n_los": n_los,
-               "status": "ok" if res is not None else "failed"}
+               "status": "ok" if res is not None else "failed",
+               "wall_s": round(time.time() - t0, 1)}
+        print(f"[sample] {run_id} {rec['status']} in {rec['wall_s']:.0f}s", flush=True)
         with open(manifest_path, "a") as f:
             f.write(json.dumps(rec) + "\n")
         if res is not None:

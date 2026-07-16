@@ -18,12 +18,11 @@ import yaml
 from torch.utils.data import DataLoader, TensorDataset
 
 from ..device import resolve_device
-from ..emulator.predict import load_emulator
 from ..prior import Prior
-from .embedding import build_embedding
+from .embedding import build_cube_embedding, build_embedding
 from .flow import NPE, Flow
 from .priors import build_prior
-from .simulator import LibrarySimulator, Simulator
+from .simulator import CubeLibrarySimulator, LibrarySimulator, Simulator
 
 
 def _generate(sim, n, chunk=20000):
@@ -42,24 +41,36 @@ def train(cfg):
     n_feat = npe_cfg.get("embedding_features", 24)
 
     # (1) Simulator for (theta, x) pairs. train_source="library" draws REAL library rows (the fix
-    # for the emulator-gap overconfidence — no coherent emulator error to be blind to); "emulator"
-    # (default) draws through the trained emulator + independent per-bin noise.
+    # for the emulator-gap overconfidence — no coherent emulator error to be blind to);
+    # "library_cube" = the spaxel model: real library CUBES, no added noise at all, one pass over
+    # the unique training rows per epoch; "emulator" (default) draws through the trained emulator
+    # + independent per-bin noise.
     train_source = npe_cfg.get("train_source", "emulator")
-    if train_source == "library":
+    sim_cube = None
+    if train_source == "library_cube":
+        sim_cube = CubeLibrarySimulator(cfg, seed=npe_cfg.get("seed", 0))
+        theta, x = sim_cube.all_rows()                             # (M,dim) f32, (M,nx,nx,nvel) f16
+    elif train_source == "library":
         sim = LibrarySimulator(cfg, snr=npe_cfg.get("obs_noise_snr", 30), seed=npe_cfg.get("seed", 0))
         print(f"[npe] training on the LIBRARY directly: {sim.z.shape[0]} reserved-excluded rows",
               flush=True)
     else:
+        from ..emulator.predict import load_emulator
+
         emu = load_emulator(cfg["emulator"]["ckpt"], device="cpu")
         box, _ = build_prior(prior=prior, device="cpu")
         sim = Simulator(emu, box, snr=npe_cfg.get("obs_noise_snr", 30), seed=npe_cfg.get("seed", 0))
         print("[npe] simulating through the EMULATOR", flush=True)
-    n = npe_cfg.get("n_amortized_sims", 400000)
-    print(f"[npe] generating {n} (theta, x) pairs …", flush=True)
-    theta, x = _generate(sim, n)                                   # (n,6), (n,256) float32
+    if sim_cube is None:
+        n = npe_cfg.get("n_amortized_sims", 400000)
+        print(f"[npe] generating {n} (theta, x) pairs …", flush=True)
+        theta, x = _generate(sim, n)                               # (n,6), (n,256) float32
 
     # (2) The model: embedding CNN + conditional flow, trained JOINTLY.
-    embedding = build_embedding(n_velbins=x.shape[1], n_features=n_feat)
+    if sim_cube is not None:
+        embedding = build_cube_embedding(sim_cube.cube_shape, n_features=n_feat)
+    else:
+        embedding = build_embedding(n_velbins=x.shape[1], n_features=n_feat)
     flow = Flow(dim=theta.shape[1], context_dim=n_feat, z_lo=prior.z_lo, z_hi=prior.z_hi,
                 n_layers=npe_cfg.get("num_transforms", 8),
                 hidden=npe_cfg.get("hidden_features", 128))
@@ -67,7 +78,7 @@ def train(cfg):
     opt = torch.optim.Adam(npe.parameters(), lr=npe_cfg.get("lr", 5e-4))
 
     # train/val split of the simulated pairs (val = a small held-out slice for early stopping)
-    n_val = max(1, int(0.05 * n))
+    n_val = max(1, int(0.05 * theta.shape[0]))
     tl = DataLoader(TensorDataset(theta[n_val:], x[n_val:]),
                     batch_size=npe_cfg.get("batch_size", 1024), shuffle=True)
     vl = DataLoader(TensorDataset(theta[:n_val], x[:n_val]), batch_size=4096)
@@ -76,7 +87,9 @@ def train(cfg):
     for epoch in range(npe_cfg.get("max_num_epochs", 300)):
         npe.train()
         for th, xx in tl:
-            th, xx = th.to(device), xx.to(device)
+            # .float() lifts the cube path's float16 storage to float32 per batch (no-op for
+            # the 1-D paths, which generate float32).
+            th, xx = th.to(device), xx.to(device).float()
             # TODO(human): one NPE training step — maximize the flow's log-density of the true
             # theta given x (i.e. minimize the negative mean log-prob). Four lines, in order:
             #   1. opt.zero_grad()
@@ -90,11 +103,14 @@ def train(cfg):
             opt.step()
         npe.eval()
         with torch.no_grad():
-            vloss = sum((-npe.log_prob(th.to(device), xx.to(device)).mean()).item()
+            vloss = sum((-npe.log_prob(th.to(device), xx.to(device).float()).mean()).item()
                         for th, xx in vl) / len(vl)
         if vloss < best - 1e-4:
             best, bad = vloss, 0
-            _save(cfg, npe, prior, n_feat)
+            _save(cfg, npe, prior, n_feat,
+                  extra=None if sim_cube is None else
+                  {"observable": "cube", "cube_shape": list(sim_cube.cube_shape),
+                   **{f"cube_{k}": v for k, v in sim_cube.cube_meta.items()}})
         else:
             bad += 1
         if epoch % 5 == 0:
@@ -105,15 +121,19 @@ def train(cfg):
     print(f"[npe] done; best val_nll={best:.4f} -> {npe_cfg['ckpt']}")
 
 
-def _save(cfg, npe, prior, n_feat):
+def _save(cfg, npe, prior, n_feat, extra=None):
     ckpt = cfg["npe"]["ckpt"]
     os.makedirs(os.path.dirname(os.path.abspath(ckpt)), exist_ok=True)
-    torch.save({"state_dict": npe.state_dict(),
-                "param_names": list(prior.names), "z_lo": prior.z_lo, "z_hi": prior.z_hi,
-                "n_features": n_feat, "n_velbins": 256,
-                "num_transforms": cfg["npe"].get("num_transforms", 8),
-                "hidden_features": cfg["npe"].get("hidden_features", 128),
-                "obs_noise_snr": cfg["npe"].get("obs_noise_snr", 30)}, ckpt)
+    payload = {"state_dict": npe.state_dict(),
+               "param_names": list(prior.names), "z_lo": prior.z_lo, "z_hi": prior.z_hi,
+               "n_features": n_feat, "n_velbins": 256,
+               "num_transforms": cfg["npe"].get("num_transforms", 8),
+               "hidden_features": cfg["npe"].get("hidden_features", 128),
+               "obs_noise_snr": cfg["npe"].get("obs_noise_snr", 30)}
+    # Cube models carry their observable geometry so load_npe rebuilds the right embedding
+    # and inference can validate an uploaded cube's grid against the training grid.
+    payload.update(extra or {})
+    torch.save(payload, ckpt)
 
 
 def main():

@@ -152,24 +152,32 @@ class NPE(nn.Module):
         self.flow = flow
 
     def log_prob(self, theta, x):
-        """x: (B, 256) spectra -> embedding features -> log p(theta | x), shape (B,)."""
+        """x: a batch of observations — (B, 256) spectra or (B, nx, nx, nvel) spaxel cubes,
+        whichever this NPE's embedding eats -> log p(theta | x), shape (B,)."""
         return self.flow.log_prob(theta, self.embedding(x))
 
     @torch.no_grad()
     def sample(self, n, x):
-        """Draw n posterior samples for ONE observed spectrum x, shape (256,) or (1, 256)."""
-        x = x.reshape(1, -1) if x.dim() == 1 else x
+        """Draw n posterior samples for ONE observation x: a spectrum (256,)/(1, 256) or a
+        spaxel cube (nx, nx, nvel)/(1, nx, nx, nvel)."""
+        if x.dim() in (1, 3):                      # unbatched spectrum / unbatched cube
+            x = x.unsqueeze(0)
         return self.flow.sample(n, self.embedding(x))
 
 
 def load_npe(ckpt_path, device="cpu"):
     """Rebuild an NPE (embedding CNN + flow) from a checkpoint saved by npe.train_npe and load
-    its weights. Returns (npe in eval mode on `device`, the raw ckpt dict of hyperparams)."""
-    from .embedding import build_embedding
+    its weights. Returns (npe in eval mode on `device`, the raw ckpt dict of hyperparams).
+    A checkpoint carrying `cube_shape` is a spaxel-cube model and gets the cube embedding —
+    resolved from the CHECKPOINT, never re-guessed from a config (same rule as n_apertures)."""
+    from .embedding import build_cube_embedding, build_embedding
 
     ckpt = torch.load(ckpt_path, map_location=device, weights_only=False)
     dim, n_feat = len(ckpt["param_names"]), ckpt["n_features"]
-    embedding = build_embedding(n_velbins=ckpt["n_velbins"], n_features=n_feat)
+    if "cube_shape" in ckpt:
+        embedding = build_cube_embedding(tuple(ckpt["cube_shape"]), n_features=n_feat)
+    else:
+        embedding = build_embedding(n_velbins=ckpt["n_velbins"], n_features=n_feat)
     flow = Flow(dim=dim, context_dim=n_feat, z_lo=ckpt["z_lo"], z_hi=ckpt["z_hi"],
                 n_layers=ckpt["num_transforms"], hidden=ckpt["hidden_features"])
     npe = NPE(embedding, flow)

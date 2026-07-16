@@ -19,6 +19,13 @@ SCHEMA v2 — multi-LOS (one row per (transport run, inclination)) and multi-ape
     attrs: param_names, param_lo, param_hi, param_transforms, z_lo, z_hi,
            n_los, aperture_grid, thor_commit, schema_version
 
+SCHEMA v3 — v2 plus the SPAXEL CUBE observable (IFU mode; markers written by sample.py's
+cube mode, A=1 r_vir aperture kept as the 1-D comparison channel):
+
+    /cubes             (N, nx, nx, nvel) continuum-normalized spaxel cubes, float32
+    /cube_mc_var       (N, nx, nx, nvel) per-cell Monte-Carlo variance
+    attrs (added): cube_extent_kpc, cube_nx, cube_vel_rebin
+
 The aperture is an OBSERVATIONAL axis, not a parameter — it is NOT in params/params_z.
 run_id keys the reserved test split at the RUN level (the K inclinations of a run are
 correlated and must not be split across train/test).
@@ -35,7 +42,7 @@ import h5py
 import numpy as np
 
 from .prior import Prior
-from .thor_sim.constants import VELOCITY
+from .thor_sim.constants import NBINS_PEEL, VELOCITY
 
 
 def library_fingerprint(params_z, run_id=None, aperture_kpc=None) -> str:
@@ -75,6 +82,8 @@ def build_library(root, out, prior: Prior | None = None):
         raise FileNotFoundError(f"no sim_*/spectrum.npz under {root}; run sample.py first")
 
     params, spectra, spectra_raw, cont, mc_var, run_ids = [], [], [], [], [], []
+    cubes = []                           # [(npz_path, K)] in row order; streamed in pass 2
+    cube_meta = None                     # (extent_kpc, nx, vel_rebin) once seen; must not vary
     aperture_kpc = None
     n_los = None
     skipped = []
@@ -92,9 +101,23 @@ def build_library(root, out, prior: Prior | None = None):
             mcv = np.asarray(d["mc_var"], dtype=np.float32)
             incl_deg = np.asarray(d["incl_deg"], dtype=float)    # (K,)
             ap = np.asarray(d["aperture_kpc"], dtype=np.float32)  # (A,)
+            cube = d["cube"].astype(np.float32) if "cube" in d.files else None  # (K,nx,nx,nvel)
+            cube_var = d["cube_mc_var"].astype(np.float32) if cube is not None else None
         except Exception as e:                       # EOFError, BadZipFile, KeyError, …
             skipped.append(f"{npz} ({type(e).__name__})")
             continue
+        # All-or-none: `params` holds only PREVIOUS markers' rows here, so this compares
+        # this marker's mode against everything already aggregated.
+        if params and ((cube is not None) != (cube_meta is not None)):
+            raise RuntimeError(f"{npz}: cube and non-cube markers mixed in one library.root — "
+                               f"use a FRESH root per mode")
+        if cube is not None:
+            meta = (float(d["extent_kpc"]), int(d["nx"]), int(d["vel_rebin"]))
+            if cube_meta is None:
+                cube_meta = meta
+            elif cube_meta != meta:
+                raise RuntimeError(f"{npz}: cube grid {meta} != {cube_meta} — never mix cube "
+                                   f"grids in one library.root")
         if f.ndim != 3:
             raise RuntimeError(
                 f"{npz}: expected (K, A, nbins) spectra (schema v2); got shape {f.shape}. "
@@ -111,6 +134,10 @@ def build_library(root, out, prior: Prior | None = None):
             cont.append(c[k])               # (A,)
             mc_var.append(mcv[k])           # (A, nbins)
             run_ids.append(run_idx)
+        if cube is not None:
+            # Cubes are NOT stacked in RAM (60k rows would be ~18 GB); remember the marker
+            # and stream its rows into the pre-sized HDF5 dataset in a second pass below.
+            cubes.append((npz, K))
 
     if skipped:
         print(f"[library] skipped {len(skipped)} unreadable spectrum.npz (interrupted mid-write); "
@@ -153,22 +180,59 @@ def build_library(root, out, prior: Prior | None = None):
         f.attrs["n_los"] = int(n_los)
         f.attrs["aperture_grid"] = np.asarray(aperture_kpc, dtype=np.float32)
         f.attrs["thor_commit"] = THOR_COMMIT
-        f.attrs["schema_version"] = SCHEMA_VERSION
+        f.attrs["schema_version"] = 3 if cube_meta else SCHEMA_VERSION
+        if cube_meta:
+            # Pass 2: stream each marker's cube rows straight into the pre-sized datasets
+            # (row-chunked + gzip'd: halo cells are zero-heavy, and training reads by row).
+            extent_kpc, nx, vel_rebin = cube_meta
+            nvel = NBINS_PEEL // vel_rebin
+            N = params.shape[0]
+            shape = (N, nx, nx, nvel)
+            dc = f.create_dataset("cubes", shape=shape, dtype=np.float32,
+                                  chunks=(1, nx, nx, nvel), compression="gzip",
+                                  compression_opts=4)
+            dv = f.create_dataset("cube_mc_var", shape=shape, dtype=np.float32,
+                                  chunks=(1, nx, nx, nvel), compression="gzip",
+                                  compression_opts=4)
+            f.attrs["cube_extent_kpc"] = float(extent_kpc)
+            f.attrs["cube_nx"] = int(nx)
+            f.attrs["cube_vel_rebin"] = int(vel_rebin)
+            row = 0
+            for npz, K in cubes:
+                d = np.load(npz, allow_pickle=True)
+                dc[row:row + K] = d["cube"].astype(np.float32)
+                dv[row:row + K] = d["cube_mc_var"].astype(np.float32)
+                row += K
+            assert row == N, f"cube rows ({row}) != param rows ({N})"
     print(f"[library] wrote {params.shape[0]} rows ({len(npzs)} runs x {n_los} LOS, "
-          f"{aperture_kpc.size} apertures) -> {out}")
+          f"{aperture_kpc.size} apertures"
+          + (f", cubes {cube_meta[1]}x{cube_meta[1]}x{NBINS_PEEL // cube_meta[2]}" if cube_meta else "")
+          + f") -> {out}")
     return out
 
 
-def load_library(path):
+def load_library(path, load_cubes=False):
     """Load a library file into a dict of arrays + metadata. THOR-independent.
 
     For a v2 (multi-aperture) library `spectra`/`spectra_raw`/`mc_var` are (N, A, nbins),
     `continuum` is (N, A), and `run_id` / `aperture_kpc` are present. For a legacy v1
     file (single aperture) `run_id` defaults to per-row indices and `aperture_kpc` to the
-    scalar attr, so callers can treat both uniformly."""
+    scalar attr, so callers can treat both uniformly.
+
+    A v3 (spaxel-cube) library additionally reports `has_cubes` + the cube grid metadata;
+    the multi-GB `/cubes` + `/cube_mc_var` datasets are only materialized with
+    `load_cubes=True` (the cube trainer reads them itself, float16-downcast)."""
     with h5py.File(path, "r") as f:
         out = {k: f[k][:] for k in
                ("params", "params_z", "spectra", "spectra_raw", "continuum", "mc_var", "velocity")}
+        out["has_cubes"] = "cubes" in f
+        if out["has_cubes"]:
+            out["cube_extent_kpc"] = float(f.attrs["cube_extent_kpc"])
+            out["cube_nx"] = int(f.attrs["cube_nx"])
+            out["cube_vel_rebin"] = int(f.attrs["cube_vel_rebin"])
+            if load_cubes:
+                out["cubes"] = f["cubes"][:]
+                out["cube_mc_var"] = f["cube_mc_var"][:]
         out["run_id"] = f["run_id"][:] if "run_id" in f else None
         out["aperture_kpc"] = f["aperture_kpc"][:] if "aperture_kpc" in f else None
         out["param_names"] = list(f.attrs["param_names"])
@@ -186,7 +250,7 @@ def load_library(path):
                                    if scalar_ap is not None else None)
     # v1 libraries (schema_version 1 or unset) read fine: spectra stay 2-D and run_id is None;
     # callers branch on spectra.ndim / run_id. Reject only genuinely unknown future versions.
-    if out["schema_version"] not in (1, 2, -1):
+    if out["schema_version"] not in (1, 2, 3, -1):
         raise ValueError(
             f"library schema_version {out['schema_version']} not supported by this reader "
             f"(expects 1 or 2); the reader and the file disagree on the data contract")
