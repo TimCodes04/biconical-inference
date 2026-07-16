@@ -24,8 +24,10 @@ library:
   seed: 3                              # FRESH design (2ap used seed 1; a new draw, new split)
   incl_seed: 4
   n_los: 6
-  n_cont: 300000                       # pilot-frozen: bump to 1000000 only if the pilot's
-                                       #   per-cell S/N at the frozen grid demands it
+  n_cont: 1000000                      # PILOT-FROZEN: 3.3x the halo photons for +25% median
+                                       #   wall time (360s vs 288s — transport is overhead-
+                                       #   dominated); halo cells go ~1 -> ~2 photons and the
+                                       #   photon count is the only S/N lever the pilot found
   n_line: 0
   want_mc_var: true
   cleanup_outputs: true

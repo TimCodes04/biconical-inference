@@ -62,10 +62,11 @@ def log_prob_vec(Z, emu, x_obs, snr, z_lo, z_hi):
     return out
 
 
-def run_mcmc(emu, x_obs, snr, prior, z_init, nwalkers=64, nburn=1500, nsample=2500):
+def run_mcmc(emu, x_obs, snr, prior, z_init, nwalkers=64, nburn=1500, nsample=2500, quiet=False):
     """emcee ensemble sampler over z, warm-started from NPE draws (z_init). The warm start only
     speeds convergence — the stationary distribution is the true posterior regardless of init, and a
-    long burn-in lets a wrongly-tight NPE diffuse out to the real width, so the test still bites."""
+    long burn-in lets a wrongly-tight NPE diffuse out to the real width, so the test still bites.
+    Returns (flat chain, mean acceptance fraction)."""
     dim = z_init.shape[1]
     z_lo, z_hi = prior.z_lo.astype(np.float32), prior.z_hi.astype(np.float32)
     p0 = np.clip(z_init[:nwalkers], z_lo + 1e-6, z_hi - 1e-6)
@@ -74,8 +75,9 @@ def run_mcmc(emu, x_obs, snr, prior, z_init, nwalkers=64, nburn=1500, nsample=25
                                     vectorize=True)
     sampler.run_mcmc(p0, nburn + nsample, progress=False)
     acc = float(np.mean(sampler.acceptance_fraction))           # health: ~0.2-0.5 = mixing well;
-    print(f"[mcmc] mean acceptance fraction = {acc:.2f}", flush=True)   # ~0 = stuck (warm-start faked)
-    return sampler.get_chain(discard=nburn, flat=True)          # (nwalkers*nsample, dim) z-space
+    if not quiet:
+        print(f"[mcmc] mean acceptance fraction = {acc:.2f}", flush=True)   # ~0 = stuck
+    return sampler.get_chain(discard=nburn, flat=True), acc     # flat chain (z-space), acc
 
 
 def sensitivity_figure(emu, prior, snr, out):
@@ -114,6 +116,9 @@ def main():
     ap.add_argument("--n-post", type=int, default=4000, help="NPE draws per spectrum")
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--outdir", default="validation/rvir6_lib/npe_vs_mcmc")
+    ap.add_argument("--recovery", type=int, default=0,
+                    help="if >0: T2-style MCMC recovery scatter (median vs truth) over this many "
+                         "held-out spectra, instead of the corner overlays")
     args = ap.parse_args()
 
     cfg = yaml.safe_load(open(args.config))
@@ -127,6 +132,36 @@ def main():
     rng = np.random.default_rng(args.seed)
     os.makedirs(args.outdir, exist_ok=True)
 
+    # T2-style recovery, but with the MCMC posterior median instead of the NPE's. emcee is expensive
+    # per spectrum, so use reduced chains (we only need the median/68% interval) over ~a few hundred
+    # spectra; warm-start from a few NPE draws. Reuses systematics_flow.plot_recovery for identical
+    # formatting → directly comparable to validation/<stem>/systematics_recovery.png (the NPE T2).
+    if args.recovery > 0:
+        from systematics_flow import plot_recovery
+        m = min(args.recovery, z_test.shape[0])
+        pick = rng.choice(z_test.shape[0], size=m, replace=False)
+        truth = np.full((m, len(names)), np.nan); median = np.full_like(truth, np.nan)
+        lo68 = np.full_like(truth, np.nan); hi68 = np.full_like(truth, np.nan)
+        accs = []
+        for k, i in enumerate(pick):
+            x_o = observe(flux_test[i], inst, rng)[1]
+            z_npe = npe.sample(64, torch.as_tensor(np.asarray(x_o, np.float32), device=dev)).cpu().numpy()
+            z_mc, acc = run_mcmc(emu, x_o, snr, prior, z_npe, nwalkers=32, nburn=800, nsample=1500, quiet=True)
+            accs.append(acc)
+            phys = prior.from_z(z_mc)
+            truth[k] = prior.from_z(z_test[i][None])[0]
+            median[k] = np.median(phys, axis=0)
+            lo68[k], hi68[k] = np.percentile(phys, [16, 84], axis=0)
+            if (k + 1) % 20 == 0:
+                print(f"[recov] {k+1}/{m} spectra  (mean acceptance so far {np.mean(accs):.2f})", flush=True)
+        d = {"names": names, "prior": prior, "truth": truth, "median": median,
+             "sigma": 0.5 * (hi68 - lo68)}
+        print(f"[recov] MCMC recovery over {m} spectra (mean acceptance {np.mean(accs):.2f}) — "
+              f"slope<1 = shrinkage, offset = bias:")
+        plot_recovery(d, os.path.join(args.outdir, "mcmc_recovery.png"))
+        print(f"[recov] wrote {args.outdir}/mcmc_recovery.png")
+        return
+
     sensitivity_figure(emu, prior, snr, os.path.join(args.outdir, "sensitivity.png"))
 
     # representative spread: sort reserved by logN and pick evenly (weak -> strong absorption)
@@ -138,7 +173,7 @@ def main():
         truth = prior.from_z(z_test[i][None])[0]
         x_o = observe(flux_test[i], inst, rng)[1]               # (256,) noised THOR
         z_npe = npe.sample(args.n_post, torch.as_tensor(np.asarray(x_o, np.float32), device=dev)).cpu().numpy()
-        z_mc = run_mcmc(emu, x_o, snr, prior, z_npe)            # warm-start MCMC from NPE draws
+        z_mc, _ = run_mcmc(emu, x_o, snr, prior, z_npe)         # warm-start MCMC from NPE draws
         phys_npe, phys_mc = prior.from_z(z_npe), prior.from_z(z_mc)
 
         rng_j = [(min(phys_npe[:, j].min(), phys_mc[:, j].min(), truth[j]),

@@ -285,7 +285,7 @@ def plot_pull(d, out):
         ax.plot(grid, normal, "k-", lw=1.5, label="N(0,1)")
         ax.axvline(mu, color="tab:orange", lw=1.5, label=f"mean={mu:+.2f}")
         ax.set_title(f"{names[j]}   mean={mu:+.2f}  std={sd:.2f}", fontsize=10)
-        ax.set_xlabel("pull"); ax.legend(fontsize=7)
+        ax.set_xlabel("x"); ax.legend(fontsize=7)
         print(f"  {names[j]:12s} mean={mu:+.3f}  std={sd:.3f}")
     fig.suptitle("T3 · pull on held-out THOR — mean!=0 = bias (in sigma), std!=1 = mis-sized uncertainty")
     fig.tight_layout()
@@ -319,7 +319,7 @@ def plot_regime(d, out, nbins=8):
             if i == 0:
                 ax.set_title(f"true {names[j]}", fontsize=8)
             if j == 0:
-                ax.set_ylabel(f"{names[i]}\nRMS pull", fontsize=8)
+                ax.set_ylabel(f"{names[i]}\ny", fontsize=8)
             fin = np.isfinite(rms)
             if fin.sum() >= 2:
                 peak_at = float(centers[np.nanargmax(rms)])

@@ -1,16 +1,18 @@
 #!/usr/bin/env bash
 #SBATCH --job-name=bicone-spaxel
 #SBATCH --array=0-499%300         # 500 shards over n_sims=10000 transport runs (20 runs each).
-                                  #   ~700s/run at 300k x 6 LOS on 16 cores (pilot-measured) ->
-                                  #   ~4h/shard; wall-clock ~= 10k*700s / (16h at 300 concurrent
-                                  #   is the 2ap-style envelope). VERIFY against the pilot's
-                                  #   wall_s before submitting; raise --time for 1M photons (~3x).
+                                  #   PILOT-MEASURED at 1M photons x 6 LOS on 16 cores:
+                                  #   median 360s, p90 1673s, max 4934s per run -> a typical
+                                  #   shard ~2.5h, a tail-heavy one ~5-7h. Timeouts are safe:
+                                  #   per-run markers make a requeue/resubmit resume cleanly.
 #SBATCH --partition=kipac,owners
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=16
-#SBATCH --mem=24G
-#SBATCH --time=08:00:00           # 20 runs x ~700s ~= 4h + the disk_logN~16 slow tail
+#SBATCH --mem=32G                 # 1M photons stream in 250k steps (nphotons_step_max) so THOR
+                                  #   memory stays near the 300k profile; 48G was OOM-free in
+                                  #   the pilot, 32G keeps scheduling easy with margin
+#SBATCH --time=10:00:00           # 20 runs: median-mix ~2.5h; tail-heavy shards fit under 10h
 #SBATCH --output=logs/libspaxel_%A_%a.out
 #SBATCH --error=logs/libspaxel_%A_%a.err
 #
