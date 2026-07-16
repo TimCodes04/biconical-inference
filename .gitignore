@@ -15,6 +15,8 @@ uv.lock
 # Large generated artifacts — the training library, THOR run outputs, checkpoints, plots.
 # These are regenerated from code + config; never commit them.
 runs/
+# ad-hoc THOR scratch dirs (e.g. runs_thor_sens from scripts/thor_sensitivity.py)
+runs_*/
 library/
 *.h5
 *.hdf5

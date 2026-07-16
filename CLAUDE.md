@@ -18,6 +18,17 @@ work is the **ML half** (emulator → NPE → validation → frontend), which no
 model families** (see "Model families" below); real-data ingestion in `obs/loader.py` is
 still a stub.
 
+**Branch `tims_own_model`** additionally hosts a from-scratch flow-NPE for the single-aperture
+r_vir model (`configs/rvir6.yaml`, shipped ckpt `checkpoints/npe_rvir6_lib.pt`, library-trained).
+It is thoroughly validated — see **`MODEL_VALIDATION.md`** (the authoritative writeup; detailed
+lab-notebooks in `docs/investigation/`) and the diagnostic toolkit `scripts/{systematics_flow,
+npe_vs_mcmc,thor_sensitivity,validate_flow,example_fits}.py`. Headline finding: the 1-D r_vir
+spectrum strongly constrains `logN/theta/incl/disk_logN` but only **weakly** the outflow
+kinematics (`vexp`=v_max, `av`), and that weakness is **viewing-angle dependent** (strong face-on,
+near-invisible at the cone edge — ground-truth THOR confirmed). The planned next step (separate
+session / new branch) is an NPE on **full IFU spaxels** rather than 1-D spectra, to recover the
+kinematics the aperture-integrated spectrum loses off-axis.
+
 ## Commands
 
 ```bash

@@ -27,13 +27,18 @@ class CouplingLayer(nn.Module):
         super().__init__()
         self.dim = dim
         self.flip = flip
-        self.d = dim // 2                          # A = d dims, B = dim - d dims
-        b_dim = dim - self.d
-        # Conditioner: reads A (d dims) + the spectrum embedding (context_dim) and emits a
-        # shift and a log_scale for EACH B dim. It can be arbitrarily expressive — its
-        # complexity lands OFF-diagonal in the Jacobian, so the log-det stays trivial.
+        self.d = dim // 2                          # split point: columns [:d] vs [d:]
+        # `flip` chooses which side of the split is the untouched conditioning half A. For ODD
+        # dim the two sides differ in size (d vs dim-d), so the conditioner's in/out widths must
+        # follow the ACTUAL A/B sizes for THIS layer's flip — not always `d`. (For even dim both
+        # are dim/2, so this is identical to the old sizing and existing checkpoints still load.)
+        a_dim = dim - self.d if flip else self.d          # size of A (conditioning input)
+        b_dim = self.d if flip else dim - self.d          # size of B (affine-transformed half)
+        # Conditioner: reads A (a_dim) + the spectrum embedding (context_dim) and emits a shift
+        # and a log_scale for EACH B dim. It can be arbitrarily expressive — its complexity lands
+        # OFF-diagonal in the Jacobian, so the log-det stays trivial.
         self.net = nn.Sequential(
-            nn.Linear(self.d + context_dim, hidden), nn.SiLU(),
+            nn.Linear(a_dim + context_dim, hidden), nn.SiLU(),
             nn.Linear(hidden, hidden), nn.SiLU(),
             nn.Linear(hidden, 2 * b_dim),
         )

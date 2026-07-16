@@ -1,0 +1,32 @@
+{
+  "config": "configs/rvir6.yaml",
+  "npe_ckpt": "checkpoints/npe_rvir6_lib.pt",
+  "sbc_generator": "library",
+  "n_sbc": 1000,
+  "coverage": {
+    "logN": {
+      "cov68": 0.673,
+      "cov90": 0.911
+    },
+    "theta": {
+      "cov68": 0.693,
+      "cov90": 0.927
+    },
+    "av": {
+      "cov68": 0.7,
+      "cov90": 0.904
+    },
+    "incl": {
+      "cov68": 0.689,
+      "cov90": 0.909
+    },
+    "vexp_kms": {
+      "cov68": 0.712,
+      "cov90": 0.903
+    },
+    "disk_logN": {
+      "cov68": 0.706,
+      "cov90": 0.914
+    }
+  }
+}

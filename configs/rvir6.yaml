@@ -66,5 +66,7 @@ npe:
   instrument_conditioned: true
   seed: 0
   obs_noise_snr: 30
-  ckpt: ./checkpoints/npe_rvir6.pt
+  ckpt: ./checkpoints/npe_rvir6_lib.pt   # v2: trained on the library (train_source: library) —
+                                         # calibrated + ground-truth-validated (see MODEL_VALIDATION.md).
+                                         # v1 npe_rvir6.pt (emulator-trained) kept for the A/B record.
 device: auto

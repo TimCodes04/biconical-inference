@@ -23,7 +23,7 @@ from ..prior import Prior
 from .embedding import build_embedding
 from .flow import NPE, Flow
 from .priors import build_prior
-from .simulator import Simulator
+from .simulator import LibrarySimulator, Simulator
 
 
 def _generate(sim, n, chunk=20000):
@@ -41,12 +41,21 @@ def train(cfg):
     prior = Prior.from_config(cfg)
     n_feat = npe_cfg.get("embedding_features", 24)
 
-    # (1) Simulator: draw (theta, x) pairs through the trained emulator + noise.
-    emu = load_emulator(cfg["emulator"]["ckpt"], device="cpu")
-    box, _ = build_prior(prior=prior, device="cpu")
-    sim = Simulator(emu, box, snr=npe_cfg.get("obs_noise_snr", 30), seed=npe_cfg.get("seed", 0))
+    # (1) Simulator for (theta, x) pairs. train_source="library" draws REAL library rows (the fix
+    # for the emulator-gap overconfidence — no coherent emulator error to be blind to); "emulator"
+    # (default) draws through the trained emulator + independent per-bin noise.
+    train_source = npe_cfg.get("train_source", "emulator")
+    if train_source == "library":
+        sim = LibrarySimulator(cfg, snr=npe_cfg.get("obs_noise_snr", 30), seed=npe_cfg.get("seed", 0))
+        print(f"[npe] training on the LIBRARY directly: {sim.z.shape[0]} reserved-excluded rows",
+              flush=True)
+    else:
+        emu = load_emulator(cfg["emulator"]["ckpt"], device="cpu")
+        box, _ = build_prior(prior=prior, device="cpu")
+        sim = Simulator(emu, box, snr=npe_cfg.get("obs_noise_snr", 30), seed=npe_cfg.get("seed", 0))
+        print("[npe] simulating through the EMULATOR", flush=True)
     n = npe_cfg.get("n_amortized_sims", 400000)
-    print(f"[npe] simulating {n} (theta, x) pairs through the emulator …", flush=True)
+    print(f"[npe] generating {n} (theta, x) pairs …", flush=True)
     theta, x = _generate(sim, n)                                   # (n,6), (n,256) float32
 
     # (2) The model: embedding CNN + conditional flow, trained JOINTLY.
