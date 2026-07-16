@@ -39,6 +39,9 @@ param_bounds:
   disk_logN: [13.0, 16.0]
 
 fixed:
+  nphotons_step_max: 250000   # stream 1M photons in 4 steps: single-step THOR at 1M holds
+                              #   all photon state + 6-LOS peel buffers at once and OOM'd
+                              #   24G nodes (pilot array 34229898 tasks 5-9, exit -9)
   ew: 0.0
   sigmasrc_kms: 100.0
   sigmaran_kms: 100.0

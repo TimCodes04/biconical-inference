@@ -89,22 +89,43 @@ def line_mask(nvel):
     return (vc >= LINE_WINDOW_KMS[0]) & (vc <= LINE_WINDOW_KMS[1])
 
 
+def halo_mask(nx, extent):
+    """Halo spaxels whose ENTIRE footprint lies inside the annulus — in particular the
+    source-bearing central cells are excluded by their half-diagonal, not their center
+    (at coarse grids a central cell's CENTER can sit >10 kpc out while the cell still
+    contains the point source, which would leak the full continuum into a 'halo' metric)."""
+    r = radii_kpc(nx, extent)
+    half_diag = (2 * extent / nx) / np.sqrt(2)
+    return (r >= HALO_R_KPC[0] + half_diag) & (r <= HALO_R_KPC[1])
+
+
 def snr_table(runs, extent):
-    """Median halo-cell S/N in the line window, per candidate grid: {(nx, nvel): median}."""
+    """Per candidate grid: {(nx, nvel): (cell_p90, lineint_med)}.
+
+    cell_p90    : 90th-pct S/N of occupied halo CELLS in the line window (velocity-resolved
+                  information; the MEDIAN saturates at exactly 1.0 while cells are
+                  single-photon, so the tail is the informative statistic).
+    lineint_med : median halo-SPAXEL S/N of the line-window-integrated map (narrowband-image
+                  information — can the NPE see the halo's spatial structure at all?).
+    """
     out = {}
     for nx in SPATIAL_CANDIDATES:
         f_xy = runs[0]["nx"] // nx
-        r = radii_kpc(nx, extent)
-        halo = (r >= HALO_R_KPC[0]) & (r <= HALO_R_KPC[1])
+        halo = halo_mask(nx, extent)
         for nv in VEL_CANDIDATES:
             f_v = runs[0]["cube"].shape[-1] // nv
-            vals = []
+            cell_p90, lint = [], []
             for run in runs:
-                s = cell_snr(block_sum(run["cube"], f_xy, f_v),
-                             block_sum(run["var"], f_xy, f_v))
-                sel = s[:, halo][..., line_mask(nv)]
-                vals.append(np.median(sel[sel > 0]) if (sel > 0).any() else 0.0)
-            out[(nx, nv)] = float(np.median(vals))
+                c = block_sum(run["cube"], f_xy, f_v)
+                v = block_sum(run["var"], f_xy, f_v)
+                s = cell_snr(c, v)[:, halo][..., line_mask(nv)]
+                cell_p90.append(np.percentile(s[s > 0], 90) if (s > 0).any() else 0.0)
+                lm = line_mask(nv)
+                img = c[..., lm].sum(-1)[:, halo]          # (K, n_halo) line-integrated
+                ivar = v[..., lm].sum(-1)[:, halo]
+                si = cell_snr(img, ivar)
+                lint.append(np.median(si[si > 0]) if (si > 0).any() else 0.0)
+            out[(nx, nv)] = (float(np.median(cell_p90)), float(np.median(lint)))
     return out
 
 
@@ -144,15 +165,18 @@ def plate_radial_snr(runs_a, runs_b, extent, out_png):
         rb = np.linspace(0, extent, 11)
         for runs, label in ((runs_a, "300k"), (runs_b, "1M")):
             f_v = runs[0]["cube"].shape[-1] // 64
+            lm = line_mask(64)
             med = []
             for lo, hi in zip(rb[:-1], rb[1:]):
                 sel_r = (r >= lo) & (r < hi)
                 vals = []
                 for run in runs:
-                    s = cell_snr(block_sum(run["cube"], f_xy, f_v),
-                                 block_sum(run["var"], f_xy, f_v))
-                    cells = s[:, sel_r][..., line_mask(64)]
-                    vals.append(np.median(cells[cells > 0]) if (cells > 0).any() else 0.0)
+                    c = block_sum(run["cube"], f_xy, f_v)
+                    v = block_sum(run["var"], f_xy, f_v)
+                    # line-integrated per-spaxel S/N (the per-CELL median saturates at 1.0
+                    # while cells are single-photon — uninformative for sparse grids)
+                    si = cell_snr(c[..., lm].sum(-1)[:, sel_r], v[..., lm].sum(-1)[:, sel_r])
+                    vals.append(np.median(si[si > 0]) if (si > 0).any() else 0.0)
                 med.append(np.median(vals))
             ax.plot(0.5 * (rb[:-1] + rb[1:]), med, marker="o", ms=3, label=label)
         ax.axhline(3, color="gray", lw=0.8, ls="--")
@@ -176,17 +200,28 @@ def main():
     args = ap.parse_args()
     os.makedirs(args.out, exist_ok=True)
 
-    runs300, runs1m = load_runs(args.root300), load_runs(args.root1m)
+    runs300 = load_runs(args.root300)
+    try:
+        runs1m = load_runs(args.root1m)
+    except FileNotFoundError:
+        runs1m = None
+        print(f"[diag] NOTE: no 1M markers under {args.root1m} yet — "
+              "grid/occupancy analysis on the 300k arm only")
     extent = runs300[0]["extent"]
-    print(f"[diag] {len(runs300)} runs @300k, {len(runs1m)} @1M, extent ±{extent:.0f} kpc")
+    print(f"[diag] {len(runs300)} runs @300k, "
+          f"{len(runs1m) if runs1m else 0} @1M, extent ±{extent:.0f} kpc")
 
-    report = {"n_runs": [len(runs300), len(runs1m)], "extent_kpc": extent}
-    for label, runs in (("300k", runs300), ("1M", runs1m)):
+    arms = [("300k", runs300)] + ([("1M", runs1m)] if runs1m else [])
+    report = {"n_runs": {lbl: len(r) for lbl, r in arms}, "extent_kpc": extent}
+    for label, runs in arms:
         tab = snr_table(runs, extent)
-        report[f"snr_{label}"] = {f"nx{nx}_nv{nv}": v for (nx, nv), v in tab.items()}
-        print(f"\n  median halo-cell S/N ({label}), line window {LINE_WINDOW_KMS}:")
+        report[f"snr_{label}"] = {f"nx{nx}_nv{nv}": {"cell_p90": v[0], "lineint_med": v[1]}
+                                  for (nx, nv), v in tab.items()}
+        print(f"\n  halo S/N ({label}), line window {LINE_WINDOW_KMS} "
+              f"[cell p90 / line-integrated median]:")
         for nv in VEL_CANDIDATES:
-            row = "   ".join(f"nx={nx}: {tab[(nx, nv)]:6.2f}" for nx in SPATIAL_CANDIDATES)
+            row = "   ".join(f"nx={nx}: {tab[(nx, nv)][0]:5.1f}/{tab[(nx, nv)][1]:5.1f}"
+                             for nx in SPATIAL_CANDIDATES)
             print(f"    nvel={nv:4d}   {row}")
 
     print("\n  library size at target rows "
@@ -199,7 +234,7 @@ def main():
         print("    " + "   ".join(f"nx={nx},nv={nv}: {report['size_gb'][f'nx{nx}_nv{nv}']:6.1f} GB"
                                   for nv in VEL_CANDIDATES))
 
-    for label, root in (("300k", args.root300), ("1M", args.root1m)):
+    for label, root in [("300k", args.root300)] + ([("1M", args.root1m)] if runs1m else []):
         ts = wall_times(root)
         if ts.size:
             report[f"wall_s_{label}"] = {"median": float(np.median(ts)),
@@ -208,11 +243,13 @@ def main():
             print(f"  wall time {label}: median {np.median(ts):.0f}s  "
                   f"p90 {np.percentile(ts, 90):.0f}s  max {ts.max():.0f}s")
 
-    # plates: channel maps for the most face-on run (strongest kinematic signal) per budget
-    pick = min(range(len(runs300)), key=lambda i: runs300[i]["incl"].min())
+    # plates: channel maps for the strongest-halo run (max logN — occupancy tracks column
+    # density, so this is the plate where the bicone is actually visible)
+    pick = max(range(len(runs300)), key=lambda i: runs300[i]["params"]["logN"])
     plate_channel_maps(runs300[pick], os.path.join(args.out, "channel_maps_300k.png"), "300k")
-    plate_channel_maps(runs1m[pick], os.path.join(args.out, "channel_maps_1m.png"), "1M")
-    plate_radial_snr(runs300, runs1m, extent, os.path.join(args.out, "radial_snr.png"))
+    if runs1m:
+        plate_channel_maps(runs1m[pick], os.path.join(args.out, "channel_maps_1m.png"), "1M")
+        plate_radial_snr(runs300, runs1m, extent, os.path.join(args.out, "radial_snr.png"))
 
     with open(os.path.join(args.out, "pilot_report.json"), "w") as fh:
         json.dump(report, fh, indent=2)

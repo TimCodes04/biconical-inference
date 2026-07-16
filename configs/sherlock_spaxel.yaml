@@ -30,8 +30,13 @@ library:
   want_mc_var: true
   cleanup_outputs: true
   cube:
-    extent_kpc: 100.0                  # wind outer radius (0.4 * 250 kpc box)
-    nx: 24                             # pilot-frozen candidate (cell = 8.3 kpc)
+    extent_kpc: 60.0                   # PILOT-FROZEN: the scattered halo is compact — median
+                                       #   r90 of off-center flux = 11 kpc, r99 = 21 kpc; the
+                                       #   most extended pilot run (logN 15.8, theta 68) has
+                                       #   r99 = 80 kpc with ~1% of halo flux beyond 60. The
+                                       #   wind's 100-kpc outskirts never receive a photon.
+    nx: 24                             # 5 kpc cells (~0.7 arcsec at z~0.7 — seeing-matched);
+                                       #   halo r90 spans ~2-3 cells, r99 ~4-5
     vel_rebin: 4                       # 256 -> 64 velocity bins (53 km/s, ~MUSE LSF scale)
 
 thor:
@@ -50,6 +55,8 @@ param_bounds:
   disk_logN: [13.0, 16.0]
 
 fixed:
+  nphotons_step_max: 250000   # bound THOR's per-step memory independent of n_cont (the 1M
+                              #   pilot arm OOM'd 24G nodes single-step); harmless at 300k
   ew: 0.0
   sigmasrc_kms: 100.0
   sigmaran_kms: 100.0
