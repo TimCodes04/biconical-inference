@@ -87,8 +87,17 @@ def simulate_multi(params, rundir, runner, n_cont=300_000, n_line=0, incls=None,
         if not run_subrun(runner, os.path.join(rundir, source), conf, label, n_los=len(incls)):
             return None
 
-    grid = extract.peel_grid(rundir, p_run, n_cont, n_line, incls, apertures,
-                             want_var=want_mc_var)
+    # A run killed mid-write (preemption/timeout) can leave a TRUNCATED peel data.h5 that
+    # passes the skip-if-complete existence check; extracting it raises. Treat that run as
+    # failed (return None, caller logs + moves on) instead of crashing the whole shard —
+    # deleting the run's output dir before a resubmit forces a clean re-run.
+    try:
+        grid = extract.peel_grid(rundir, p_run, n_cont, n_line, incls, apertures,
+                                 want_var=want_mc_var)
+    except Exception as e:
+        print(f"[extract] {os.path.basename(rundir)}: corrupt/unreadable peel output "
+              f"({type(e).__name__}: {e}) — marking run failed", flush=True)
+        return None
     f_raw, mc_var = grid if want_mc_var else (grid, None)
     f_raw = np.asarray(f_raw, dtype=float)
     K, A = f_raw.shape[:2]
@@ -144,13 +153,20 @@ def simulate_cube(params, rundir, runner, n_cont=300_000, n_line=0, incls=None,
             return None
 
     apertures = np.asarray([R_VIR_KPC])
-    grid = extract.peel_grid(rundir, p_run, n_cont, n_line, incls, apertures,
-                             want_var=want_mc_var)
+    # Same truncated-peel guard as simulate_multi: a corrupt data.h5 (killed mid-write,
+    # passes the existence-based skip) must fail THIS run, not the whole shard.
+    try:
+        grid = extract.peel_grid(rundir, p_run, n_cont, n_line, incls, apertures,
+                                 want_var=want_mc_var)
+        cube_res = extract.peel_cube(rundir, p_run, n_cont, n_line, incls,
+                                     extent_kpc=extent_kpc, nx=nx, vel_rebin=vel_rebin,
+                                     want_var=want_mc_var)
+    except Exception as e:
+        print(f"[extract] {os.path.basename(rundir)}: corrupt/unreadable peel output "
+              f"({type(e).__name__}: {e}) — marking run failed", flush=True)
+        return None
     f_raw, mc_var = grid if want_mc_var else (grid, None)
     f_raw = np.asarray(f_raw, dtype=float)                      # (K, 1, nbins)
-    cube_res = extract.peel_cube(rundir, p_run, n_cont, n_line, incls,
-                                 extent_kpc=extent_kpc, nx=nx, vel_rebin=vel_rebin,
-                                 want_var=want_mc_var)
     cube, cube_var = cube_res if want_mc_var else (cube_res, None)
 
     K = f_raw.shape[0]
