@@ -58,20 +58,23 @@ def build_embedding(n_velbins=256, n_features=16, n_channels=1):
 
 
 class CubeCNN(nn.Module):
-    """(B, nx, nx, nvel) spaxel cube -> (B, n_features) summary — the IFU counterpart of
-    SpectrumCNN, for the spaxel-NPE. Factorized, not a monolithic 3-D conv:
+    """(B, nx, nx, nvel) spaxel cube -> (B, n_features) summary — v2, kinematics-preserving.
 
-      1. `spectral` — a per-spaxel 1-D CNN over velocity, the SAME filters applied to every
-         spaxel (the line physics — trough shape, blue edge — looks alike everywhere on the
-         sky, so weight sharing is the right inductive bias and keeps parameters tiny).
-         Compresses each spaxel's (nvel,) spectrum to a (C_S, nvel//8) feature map.
-      2. `spatial` — a 2-D CNN over the sky plane that reads each spaxel's flattened
-         spectral features as its channel vector and pools nx -> nx//4 (where the velocity
-         GRADIENTS across the halo — the kinematic signal the 1-D model lost — live).
-      3. `head` — MLP down to the n_features vector the flow conditions on.
+    v1's spectral stage pooled 64 velocity bins to 8 positions (~425 km/s acuity), which
+    destroyed the trough-edge POSITION that carries vexp/av: a linear probe showed vexp
+    decodable from the raw collapsed cube (r=0.21) but not from v1's features (r=0.006),
+    while structural params were fine. v2 fixes that two ways:
+
+      1. `spectral` — per-spaxel 1-D CNN with ONE 2x pool (nvel -> nvel//2, ~106 km/s at the
+         production grid — matching the sigma_ran=100 km/s physical floor), 32 channels; a
+         1x1 `reduce` then compresses the per-spaxel feature vector so the `spatial` 2-D CNN
+         (sky-plane structure + velocity gradients) keeps a sane parameter count.
+      2. `collapsed` — the CONCENTRATION pathway: the spaxel-sum IS the aperture spectrum
+         (the flux-conservation identity), i.e. the exact high-S/N 1-D view whose kinematic
+         constraint the validated 1-D model demonstrated. A small full-resolution 1-D CNN
+         reads it and its features join the head, so the network gets the concentrated
+         kinematic signal for free while the spatial stage adds what only the cube has.
     """
-
-    C_S = 16                                 # spectral channels per spaxel after stage 1
 
     def __init__(self, cube_shape, n_features=32):
         super().__init__()
@@ -81,19 +84,24 @@ class CubeCNN(nn.Module):
         if nvel % 8 or nx % 4:
             raise ValueError(f"cube_shape {cube_shape} needs nvel % 8 == 0 and nx % 4 == 0")
         self.cube_shape = tuple(cube_shape)
-        self.spectral = nn.Sequential(       # (N, 1, nvel) -> (N, C_S, nvel // 8)
-            down_block(1, 16, 7),
-            down_block(16, self.C_S, 5),
-            down_block(self.C_S, self.C_S, 5),
+        self.spectral = nn.Sequential(       # (N, 1, nvel) -> (N, 32, nvel//2)
+            nn.Conv1d(1, 32, 7, padding=3), nn.SiLU(), nn.MaxPool1d(2),
+            nn.Conv1d(32, 32, 5, padding=2), nn.SiLU(),
         )
-        spec_dim = self.C_S * (nvel // 8)    # one spaxel's flattened spectral features
-        self.spatial = nn.Sequential(        # (B, spec_dim, nx, nx) -> (B, 32, nx//4, nx//4)
-            nn.Conv2d(spec_dim, 64, 3, padding=1), nn.SiLU(), nn.MaxPool2d(2),
+        spec_dim = 32 * (nvel // 2)          # one spaxel's flattened spectral features
+        self.reduce = nn.Conv2d(spec_dim, 128, 1)   # per-spaxel linear compression
+        self.spatial = nn.Sequential(        # (B, 128, nx, nx) -> (B, 32, nx//4, nx//4)
+            nn.SiLU(),
+            nn.Conv2d(128, 64, 3, padding=1), nn.SiLU(), nn.MaxPool2d(2),
             nn.Conv2d(64, 32, 3, padding=1), nn.SiLU(), nn.MaxPool2d(2),
         )
+        self.collapsed = nn.Sequential(      # (B, 1, nvel) -> (B, 64): the aperture view
+            nn.Conv1d(1, 16, 7, padding=3), nn.SiLU(), nn.MaxPool1d(2),
+            nn.Conv1d(16, 32, 5, padding=2), nn.SiLU(),
+            nn.Flatten(), nn.Linear(32 * (nvel // 2), 64), nn.SiLU(),
+        )
         self.head = nn.Sequential(
-            nn.Flatten(),                    # (B, 32, nx//4, nx//4) -> (B, 32*(nx//4)^2)
-            nn.Linear(32 * (nx // 4) ** 2, 128), nn.SiLU(),
+            nn.Linear(32 * (nx // 4) ** 2 + 64, 128), nn.SiLU(),
             nn.Linear(128, n_features),
         )
 
@@ -101,12 +109,14 @@ class CubeCNN(nn.Module):
         """(B, nx, nx, nvel) -> (B, n_features)."""
         B, nx, _, nvel = x.shape
         # fold the sky axes into the batch so the SAME spectral filters see every spaxel
-        s = self.spectral(x.reshape(B * nx * nx, 1, nvel))     # (B*nx*nx, C_S, nvel//8)
-        # per-spaxel features -> Conv2d channels: flatten (C_S, nvel//8), then permute BEFORE
-        # the final reshape so the channel dim moves without scrambling the (nx, nx) layout
+        s = self.spectral(x.reshape(B * nx * nx, 1, nvel))     # (B*nx*nx, 32, nvel//2)
+        # per-spaxel features -> Conv2d channels: permute BEFORE the final reshape so the
+        # channel dim moves without scrambling the (nx, nx) layout
         s = s.reshape(B, nx * nx, -1).permute(0, 2, 1)         # (B, spec_dim, nx*nx)
         s = s.reshape(B, -1, nx, nx)                           # (B, spec_dim, nx, nx)
-        return self.head(self.spatial(s))
+        s = self.spatial(self.reduce(s)).flatten(1)            # (B, 32*(nx//4)^2)
+        c = self.collapsed(x.sum(dim=(1, 2)).unsqueeze(1))     # (B, 64) concentration path
+        return self.head(torch.cat([s, c], dim=1))
 
 
 def build_cube_embedding(cube_shape, n_features=32):

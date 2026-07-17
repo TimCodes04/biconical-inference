@@ -76,6 +76,14 @@ def train(cfg):
                 hidden=npe_cfg.get("hidden_features", 128))
     npe = NPE(embedding, flow).to(device)
     opt = torch.optim.Adam(npe.parameters(), lr=npe_cfg.get("lr", 5e-4))
+    # Cosine decay to ~0 over the epoch budget: the v1 cube run at a flat 5e-4 oscillated in
+    # a 7.1-8.2 sawtooth (and spiked 300x once) — annealing lets it settle into the minimum.
+    sched = torch.optim.lr_scheduler.CosineAnnealingLR(
+        opt, T_max=npe_cfg.get("max_num_epochs", 300))
+    # Reflection augmentation (cube mode only): the wind is axisymmetric, so mirroring the
+    # sky across the projected axis (the v spatial axis, dim 2) is an EXACT symmetry of the
+    # forward model with unchanged labels — free effective data doubling, applied per-batch.
+    augment_flip = sim_cube is not None
 
     # train/val split of the simulated pairs (val = a small held-out slice for early stopping)
     n_val = max(1, int(0.05 * theta.shape[0]))
@@ -90,6 +98,9 @@ def train(cfg):
             # .float() lifts the cube path's float16 storage to float32 per batch (no-op for
             # the 1-D paths, which generate float32).
             th, xx = th.to(device), xx.to(device).float()
+            if augment_flip:
+                flip = torch.rand(xx.shape[0], device=device) < 0.5
+                xx[flip] = torch.flip(xx[flip], dims=[2])      # v -> -v sky mirror
             # TODO(human): one NPE training step — maximize the flow's log-density of the true
             # theta given x (i.e. minimize the negative mean log-prob). Four lines, in order:
             #   1. opt.zero_grad()
@@ -101,6 +112,7 @@ def train(cfg):
             loss.backward()
             torch.nn.utils.clip_grad_norm_(npe.parameters(), 5.0)
             opt.step()
+        sched.step()
         npe.eval()
         with torch.no_grad():
             vloss = sum((-npe.log_prob(th.to(device), xx.to(device).float()).mean()).item()

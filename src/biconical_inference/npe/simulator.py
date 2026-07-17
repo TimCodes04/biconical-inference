@@ -154,7 +154,9 @@ class CubeLibrarySimulator:
                                   aperture_kpc=lib.get("aperture_kpc"),
                                   path=split_path)) & vm_row
         with h5py.File(path, "r") as f:
-            self.cubes = f["cubes"][:].astype(np.float16)[keep]   # (M, nx, nx, nvel)
+            # .astype on the DATASET converts per-chunk during the read — peak RAM stays at
+            # the float16 result (~4 GB), never the full float32 intermediate (~9 GB).
+            self.cubes = f["cubes"].astype(np.float16)[...][keep]  # (M, nx, nx, nvel)
         self.z = z_full[keep][:, col]
         self.cube_shape = tuple(self.cubes.shape[1:])
         self.cube_meta = {"extent_kpc": lib["cube_extent_kpc"], "nx": lib["cube_nx"],
