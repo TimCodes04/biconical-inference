@@ -24,6 +24,7 @@ import matplotlib.pyplot as plt
 
 from biconical_inference.device import resolve_device
 from biconical_inference.emulator.predict import load_emulator
+from biconical_inference.npe.evaluate import tarp_credibility, tarp_ecp
 from biconical_inference.npe.flow import load_npe
 from biconical_inference.npe.priors import build_prior
 from biconical_inference.npe.simulator import CubeLibrarySimulator, LibrarySimulator, Simulator
@@ -69,19 +70,27 @@ def main():
     theta_true, x = sim.sample(args.n_sbc)
     theta_true = theta_true.numpy()
 
+    # TARP (Lemos et al. 2023) rides along with SBC: same posterior draws, one random
+    # reference point per trial, everything in the unit box so distances are comparable.
+    lo, hi = np.asarray(prior.z_lo, dtype=float), np.asarray(prior.z_hi, dtype=float)
+    rng_tarp = np.random.default_rng(777)
+    tarp_f = np.zeros(args.n_sbc)
+
     ranks = np.zeros((args.n_sbc, dim), dtype=int)
     cover68 = np.zeros((args.n_sbc, dim), dtype=bool)
     cover90 = np.zeros((args.n_sbc, dim), dtype=bool)
     for i in range(args.n_sbc):
         samp = npe.sample(args.n_post, x[i].to(dev)).cpu().numpy()   # (n_post, dim), inference-space
         tru = theta_true[i]                                          # (dim,) inference-space truth
-        
+
         ranks[i] = (samp < tru).sum(axis=0)      # shape (dim,), each in [0, n_post]
 
         lo68, hi68 = np.percentile(samp, [16, 84], axis=0)
         lo90, hi90 = np.percentile(samp, [5, 95], axis=0)
         cover68[i] = (tru >= lo68) & (tru <= hi68)
         cover90[i] = (tru >= lo90) & (tru <= hi90)
+        tarp_f[i] = tarp_credibility((samp - lo) / (hi - lo), (tru - lo) / (hi - lo),
+                                     rng_tarp.uniform(size=dim))
 
     print(f"coverage on {train_source}-self (target ~0.68 / ~0.90):")
     cov = {}
@@ -106,10 +115,25 @@ def main():
     fig.tight_layout()
     out = os.path.join(outdir, "sbc.png")
     fig.savefig(out, dpi=120)
+
+    # TARP expected-coverage curve: joint-posterior calibration (SBC marginals can pass
+    # while correlations are wrong; TARP catches that).
+    alphas, ecp, tarp_dev = tarp_ecp(tarp_f)
+    fig2, ax2 = plt.subplots(figsize=(5, 4.6))
+    ax2.plot([0, 1], [0, 1], "k--", lw=1, label="calibrated")
+    ax2.plot(alphas, ecp, color="tab:cyan", lw=2, label=f"ECP (max dev {tarp_dev:.03f})")
+    ax2.set_xlabel("credibility level α"); ax2.set_ylabel("expected coverage")
+    ax2.set_title("TARP — above diagonal = underconfident, below = overconfident", fontsize=9)
+    ax2.legend(fontsize=8)
+    fig2.tight_layout()
+    fig2.savefig(os.path.join(outdir, "tarp.png"), dpi=120)
+    print(f"[validate] TARP max |ECP - α| = {tarp_dev:.4f} (joint posterior)")
+
     with open(os.path.join(outdir, "sbc_coverage.json"), "w") as f:
         json.dump({"config": args.config, "npe_ckpt": cfg["npe"]["ckpt"],
-                   "sbc_generator": train_source, "n_sbc": args.n_sbc, "coverage": cov}, f, indent=2)
-    print(f"[validate] SBC plot -> {out}  (+ sbc_coverage.json)")
+                   "sbc_generator": train_source, "n_sbc": args.n_sbc, "coverage": cov,
+                   "tarp_max_dev": tarp_dev}, f, indent=2)
+    print(f"[validate] SBC plot -> {out}  (+ tarp.png, sbc_coverage.json)")
 
 
 if __name__ == "__main__":

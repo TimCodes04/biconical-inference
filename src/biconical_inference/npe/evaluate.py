@@ -58,6 +58,26 @@ def _ks_uniform(u):
     return float(np.max(np.abs(cdf - u)))
 
 
+def tarp_credibility(u_samples, u_truth, u_ref):
+    """One TARP trial (Lemos et al. 2023): the credibility level at which the truth lies,
+    seen from a random reference point. u_* are in the UNIT box (z normalized by z_lo/z_hi):
+    f = fraction of posterior samples closer to the reference than the truth is. Over many
+    trials with fresh references, f ~ Uniform(0,1) iff the posterior is calibrated — a JOINT
+    test (SBC ranks are per-marginal and blind to miscalibrated correlations)."""
+    r = np.linalg.norm(u_truth - u_ref)
+    return float((np.linalg.norm(u_samples - u_ref, axis=1) < r).mean())
+
+
+def tarp_ecp(fs, n_alpha=51):
+    """Expected-coverage-probability curve from TARP credibilities: ECP(alpha) = fraction of
+    trials with f <= alpha. Calibrated -> ECP == alpha (the diagonal). Returns (alphas, ecp,
+    max |ECP - alpha|); ECP above the diagonal = underconfident, below = overconfident."""
+    fs = np.asarray(fs, dtype=float)
+    alphas = np.linspace(0, 1, n_alpha)
+    ecp = np.array([(fs <= a).mean() for a in alphas])
+    return alphas, ecp, float(np.max(np.abs(ecp - alphas)))
+
+
 def npe_metrics(sample_fn, z_test, flux_test, prior, instrument,
                 n_sims=500, n_draws=512, seed=0, context_true=None) -> dict:
     """SBC ranks + credible-interval coverage + parameter recovery on the reserved set.
