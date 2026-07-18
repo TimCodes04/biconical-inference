@@ -132,9 +132,12 @@ point estimates; coverage + pull), with cube-aware branches:
   (disk-ON, outer radius 100 kpc), the θ ≤ 82–83° cap.
 - Data-gen resumability contracts (invariant #5) and run-level reserved splits.
 
-## 8. Status
+## 8. Status — COMPLETE (2026-07-18)
 
-Code + tests complete on this branch. Pilot analyzed (`validation/spaxel_pilot/`).
-Production library generating (array 34249730: 10k transports × 6 LOS at 1M photons).
-Pending: aggregate on Sherlock → rsync `library_spaxel.h5` home → reserve split →
-`bash scripts/run_spaxel_pipeline.sh` → findings doc with the A/B verdict.
+Library generated (9,753 transports × 6 LOS = 58,518 rows @ 1M photons), model trained
+(CubeCNN **v2** — the v1 embedding destroyed the kinematic signal and was rebuilt; see
+the probe method), validated, and understood. **Verdict: the cube beats the 1-D model
+4–10× on logN/theta/incl/disk_logN, recovers av (r = 0.87, advantage growing off-axis),
+and proves vexp information-limited at 1M continuum photons (emission library = the
+next lever).** The authoritative account is **`SPAXEL_MODEL_VALIDATION.md`** (battery,
+attribution, regime map, shrinkage decomposition, tail anatomy, offset recalibration).

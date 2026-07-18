@@ -18,6 +18,14 @@ work is the **ML half** (emulator → NPE → validation → frontend), which no
 model families** (see "Model families" below); real-data ingestion in `obs/loader.py` is
 still a stub.
 
+**Branch `spaxel_npe`** (off `tims_own_model`) hosts the **spaxel-cube family**
+(`configs/spaxel6.yaml`, ckpt `checkpoints/npe_spaxel6.pt`): the same 6 params inferred from
+a (24, 24, 64) IFU cube (±60 kpc, 53 km/s bins; library `library_spaxel.h5`, schema v3,
+1M-photon THOR run). CubeCNN v2 + the hand-built flow, trained on raw cubes (no noise
+model, no emulator). Beats the 1-D r_vir model 4–10× on logN/θ/incl/disk_logN, recovers
+`av` (r=0.87); `vexp` is information-limited (emission library is the lever). Authoritative
+writeup: **`SPAXEL_MODEL_VALIDATION.md`**; pipeline comparison: `SPAXEL_VS_1D.md`.
+
 **Branch `tims_own_model`** additionally hosts a from-scratch flow-NPE for the single-aperture
 r_vir model (`configs/rvir6.yaml`, shipped ckpt `checkpoints/npe_rvir6_lib.pt`, library-trained).
 It is thoroughly validated — see **`MODEL_VALIDATION.md`** (the authoritative writeup; detailed

@@ -1,0 +1,42 @@
+{
+  "tables": "checkpoints/recal_offset_spaxel6.json",
+  "n_test": 800,
+  "report": {
+    "logN": {
+      "pull_mean_before": 0.02,
+      "pull_mean_after": -0.044,
+      "abserr_before_pct": 0.31,
+      "abserr_after_pct": 0.41
+    },
+    "theta": {
+      "pull_mean_before": 0.0,
+      "pull_mean_after": 0.126,
+      "abserr_before_pct": 0.8,
+      "abserr_after_pct": 0.88
+    },
+    "av": {
+      "pull_mean_before": -0.47,
+      "pull_mean_after": -0.337,
+      "abserr_before_pct": 4.02,
+      "abserr_after_pct": 4.36
+    },
+    "incl": {
+      "pull_mean_before": 0.038,
+      "pull_mean_after": -0.088,
+      "abserr_before_pct": 0.31,
+      "abserr_after_pct": 0.36
+    },
+    "vexp_kms": {
+      "pull_mean_before": -0.239,
+      "pull_mean_after": 0.026,
+      "abserr_before_pct": 14.28,
+      "abserr_after_pct": 19.03
+    },
+    "disk_logN": {
+      "pull_mean_before": -0.017,
+      "pull_mean_after": -0.032,
+      "abserr_before_pct": 0.32,
+      "abserr_after_pct": 0.43
+    }
+  }
+}
