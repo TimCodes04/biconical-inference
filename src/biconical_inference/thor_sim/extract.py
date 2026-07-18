@@ -82,7 +82,16 @@ def _read_peel(hf, group):
     return pos, wp, velp
 
 
-def peel_grid(rundir, p, n_cont, n_line, incls, apertures_kpc, want_var=False):
+def unit_scales(n_cont, n_line):
+    """Per-source UNIT composition scales for DECOMPOSED extraction: 'cont' in the usual
+    continuum units, 'line' per Angstrom of EW (compose later as cont + EW * line)."""
+    out = {"cont": WINDOW_A / float(n_cont)}
+    if n_line > 0:
+        out["line"] = 1.0 / float(n_line)
+    return out
+
+
+def peel_grid(rundir, p, n_cont, n_line, incls, apertures_kpc, want_var=False, scales=None):
     """Composed peel spectra for K lines of sight x A cumulative apertures, from ONE run.
 
     A single THOR transport is peeled to K observer directions (per-observer HDF5
@@ -99,7 +108,8 @@ def peel_grid(rundir, p, n_cont, n_line, incls, apertures_kpc, want_var=False):
     K, A = len(incls), int(apertures.size)
     f = np.zeros((K, A, NBINS_PEEL))
     var = np.zeros((K, A, NBINS_PEEL)) if want_var else None
-    for source, s in composition_scales(p, n_cont, n_line).items():
+    for source, s in (scales if scales is not None
+                      else composition_scales(p, n_cont, n_line)).items():
         path = os.path.join(rundir, source, "output", "peel", "data.h5")
         with h5py.File(path, "r") as hf:
             for k in range(K):
@@ -128,7 +138,8 @@ def cube_bin_edges(extent_kpc, nx, vel_rebin=1):
     return uv_edges, BIN_EDGES[::vel_rebin]
 
 
-def peel_cube(rundir, p, n_cont, n_line, incls, extent_kpc, nx, vel_rebin=1, want_var=False):
+def peel_cube(rundir, p, n_cont, n_line, incls, extent_kpc, nx, vel_rebin=1, want_var=False,
+              scales=None):
     """Composed spaxel cubes for K lines of sight, from ONE run: the peel photon list
     histogrammed over (u, v, velocity) instead of aperture-cut — what an IFU delivers.
 
@@ -149,7 +160,8 @@ def peel_cube(rundir, p, n_cont, n_line, incls, extent_kpc, nx, vel_rebin=1, wan
     cube = np.zeros((K, nx, nx, nvel))
     var = np.zeros((K, nx, nx, nvel)) if want_var else None
     edges = (uv_edges, uv_edges, vel_edges)
-    for source, s in composition_scales(p, n_cont, n_line).items():
+    for source, s in (scales if scales is not None
+                      else composition_scales(p, n_cont, n_line)).items():
         path = os.path.join(rundir, source, "output", "peel", "data.h5")
         with h5py.File(path, "r") as hf:
             for k in range(K):

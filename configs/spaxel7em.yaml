@@ -1,0 +1,45 @@
+# 7-parameter EMISSION spaxel-cube model: the 6 wind params + intrinsic MgII EW.
+#
+# Trains on the decomposed v4 library (configs/sherlock_spaxel_em.yaml): every training
+# example composes x = cube_cont + EW * cube_line with EW drawn fresh from U[0, 10] A
+# (K:H = 2:1 fixed by the vendored doublet shape) — EW is inferred as the 7th parameter
+# because it is NOT directly observable (scattering moves photons out of AND into the
+# LOS; only full 4-pi accounting recovers the intrinsic EW). EW=0 draws keep the
+# continuum-only case inside the training distribution. Same flow/CubeCNN as spaxel6.
+library:
+  root: ./runs_spaxel_em
+  out:  ./library/library_spaxel_em.h5
+splits: splits/reserved_test_spaxel_em.json
+free_params: [logN, theta, av, incl, vexp_kms, disk_logN, ew]
+param_bounds:
+  logN:      [11.0, 16.0]
+  theta:     [15.0, 82.0]
+  av:        [0.5,  2.0]
+  incl:      [0.0,  90.0]
+  vexp_kms:  [50.0, 600.0]
+  disk_logN: [13.0, 16.0]
+  ew:        [0.0,  10.0]
+fixed:
+  sigmasrc_kms: 100.0
+  sigmaran_kms: 100.0
+  mass_conservation: true
+  outer_radius_box: 0.4
+  disk_on: true
+  disk_radius_box: 0.04
+  disk_height_box: 0.004
+  disk_tau_dust: 0.0
+  disk_sigma_kms: 50.0
+  source: point
+npe:
+  backend: flow
+  train_source: library_cube_em
+  embedding_features: 32
+  hidden_features: 128
+  num_transforms: 8
+  batch_size: 64
+  lr: 0.0002
+  stop_after_epochs: 25
+  max_num_epochs: 150
+  seed: 0
+  ckpt: ./checkpoints/npe_spaxel7em.pt
+device: auto

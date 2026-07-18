@@ -84,6 +84,8 @@ def build_library(root, out, prior: Prior | None = None):
     params, spectra, spectra_raw, cont, mc_var, run_ids = [], [], [], [], [], []
     cubes = []                           # [(npz_path, K)] in row order; streamed in pass 2
     cube_meta = None                     # (extent_kpc, nx, vel_rebin) once seen; must not vary
+    spectra_line = []                    # v4 (decomposed emission): unit-EW 1-D line channel
+    has_line = None                      # tri-state all-or-none guard for v4 markers
     aperture_kpc = None
     n_los = None
     skipped = []
@@ -103,6 +105,8 @@ def build_library(root, out, prior: Prior | None = None):
             ap = np.asarray(d["aperture_kpc"], dtype=np.float32)  # (A,)
             cube = d["cube"].astype(np.float32) if "cube" in d.files else None  # (K,nx,nx,nvel)
             cube_var = d["cube_mc_var"].astype(np.float32) if cube is not None else None
+            line = "cube_line" in d.files
+            f_line = d["f_line"].astype(np.float32) if line else None           # (K,1,nbins)
         except Exception as e:                       # EOFError, BadZipFile, KeyError, …
             skipped.append(f"{npz} ({type(e).__name__})")
             continue
@@ -111,6 +115,11 @@ def build_library(root, out, prior: Prior | None = None):
         if params and ((cube is not None) != (cube_meta is not None)):
             raise RuntimeError(f"{npz}: cube and non-cube markers mixed in one library.root — "
                                f"use a FRESH root per mode")
+        if has_line is None:
+            has_line = line
+        elif has_line != line:
+            raise RuntimeError(f"{npz}: decomposed-emission and plain markers mixed in one "
+                               f"library.root — use a FRESH root per mode")
         if cube is not None:
             meta = (float(d["extent_kpc"]), int(d["nx"]), int(d["vel_rebin"]))
             if cube_meta is None:
@@ -138,6 +147,9 @@ def build_library(root, out, prior: Prior | None = None):
             # Cubes are NOT stacked in RAM (60k rows would be ~18 GB); remember the marker
             # and stream its rows into the pre-sized HDF5 dataset in a second pass below.
             cubes.append((npz, K))
+        if line:
+            for k in range(K):
+                spectra_line.append(f_line[k])
 
     if skipped:
         print(f"[library] skipped {len(skipped)} unreadable spectrum.npz (interrupted mid-write); "
@@ -180,7 +192,10 @@ def build_library(root, out, prior: Prior | None = None):
         f.attrs["n_los"] = int(n_los)
         f.attrs["aperture_grid"] = np.asarray(aperture_kpc, dtype=np.float32)
         f.attrs["thor_commit"] = THOR_COMMIT
-        f.attrs["schema_version"] = 3 if cube_meta else SCHEMA_VERSION
+        f.attrs["schema_version"] = (4 if (cube_meta and has_line)
+                                     else 3 if cube_meta else SCHEMA_VERSION)
+        if has_line:
+            f.create_dataset("spectra_line", data=np.asarray(spectra_line, dtype=np.float32))
         if cube_meta:
             # Pass 2: stream each marker's cube rows straight into the pre-sized datasets
             # (row-chunked + gzip'd: halo cells are zero-heavy, and training reads by row).
@@ -188,12 +203,13 @@ def build_library(root, out, prior: Prior | None = None):
             nvel = NBINS_PEEL // vel_rebin
             N = params.shape[0]
             shape = (N, nx, nx, nvel)
-            dc = f.create_dataset("cubes", shape=shape, dtype=np.float32,
-                                  chunks=(1, nx, nx, nvel), compression="gzip",
-                                  compression_opts=4)
-            dv = f.create_dataset("cube_mc_var", shape=shape, dtype=np.float32,
-                                  chunks=(1, nx, nx, nvel), compression="gzip",
-                                  compression_opts=4)
+            def _mk(name):
+                return f.create_dataset(name, shape=shape, dtype=np.float32,
+                                        chunks=(1, nx, nx, nvel), compression="gzip",
+                                        compression_opts=4)
+            dc, dv = _mk("cubes"), _mk("cube_mc_var")
+            dl = _mk("cubes_line") if has_line else None
+            dlv = _mk("cube_line_mc_var") if has_line else None
             f.attrs["cube_extent_kpc"] = float(extent_kpc)
             f.attrs["cube_nx"] = int(nx)
             f.attrs["cube_vel_rebin"] = int(vel_rebin)
@@ -202,6 +218,9 @@ def build_library(root, out, prior: Prior | None = None):
                 d = np.load(npz, allow_pickle=True)
                 dc[row:row + K] = d["cube"].astype(np.float32)
                 dv[row:row + K] = d["cube_mc_var"].astype(np.float32)
+                if has_line:
+                    dl[row:row + K] = d["cube_line"].astype(np.float32)
+                    dlv[row:row + K] = d["cube_line_mc_var"].astype(np.float32)
                 row += K
             assert row == N, f"cube rows ({row}) != param rows ({N})"
     print(f"[library] wrote {params.shape[0]} rows ({len(npzs)} runs x {n_los} LOS, "
@@ -226,6 +245,9 @@ def load_library(path, load_cubes=False):
         out = {k: f[k][:] for k in
                ("params", "params_z", "spectra", "spectra_raw", "continuum", "mc_var", "velocity")}
         out["has_cubes"] = "cubes" in f
+        out["has_line"] = "cubes_line" in f
+        if out["has_line"]:
+            out["spectra_line"] = f["spectra_line"][:]
         if out["has_cubes"]:
             out["cube_extent_kpc"] = float(f.attrs["cube_extent_kpc"])
             out["cube_nx"] = int(f.attrs["cube_nx"])
@@ -233,6 +255,9 @@ def load_library(path, load_cubes=False):
             if load_cubes:
                 out["cubes"] = f["cubes"][:]
                 out["cube_mc_var"] = f["cube_mc_var"][:]
+                if out["has_line"]:
+                    out["cubes_line"] = f["cubes_line"][:]
+                    out["cube_line_mc_var"] = f["cube_line_mc_var"][:]
         out["run_id"] = f["run_id"][:] if "run_id" in f else None
         out["aperture_kpc"] = f["aperture_kpc"][:] if "aperture_kpc" in f else None
         out["param_names"] = list(f.attrs["param_names"])
@@ -250,7 +275,7 @@ def load_library(path, load_cubes=False):
                                    if scalar_ap is not None else None)
     # v1 libraries (schema_version 1 or unset) read fine: spectra stay 2-D and run_id is None;
     # callers branch on spectra.ndim / run_id. Reject only genuinely unknown future versions.
-    if out["schema_version"] not in (1, 2, 3, -1):
+    if out["schema_version"] not in (1, 2, 3, 4, -1):
         raise ValueError(
             f"library schema_version {out['schema_version']} not supported by this reader "
             f"(expects 1 or 2); the reader and the file disagree on the data contract")

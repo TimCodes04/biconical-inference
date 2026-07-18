@@ -195,5 +195,88 @@ def simulate_cube(params, rundir, runner, n_cont=300_000, n_line=0, incls=None,
     return out
 
 
+def simulate_cube_decomposed(params, rundir, runner, n_cont=1_000_000, n_line=400_000,
+                             incls=None, extent_kpc=60.0, nx=24, vel_rebin=4,
+                             want_mc_var=True):
+    """Emission-capable cube forward model with the continuum and line components kept
+    SEPARATE: the line subrun is extracted at UNIT EW (1 A), so any EW composes later as
+    `cont + EW * line` — EW is a composition-time parameter, never re-simulated (it only
+    ever enters composition_scales, not the radiative transfer). The line subrun ALWAYS
+    runs (bypassing sources_for's ew-gate); K:H = 2:1 per the vendored doublegaussian.
+
+    Both components are normalized by the SAME cont-only far-blue continuum level, so
+    `cont` is the familiar F/F_cont and `line` is F/F_cont per Angstrom of EW.
+
+    Returns dict: v, cube_cont/cube_line (K,nx,nx,nvel), [cube_cont_mc_var/
+    cube_line_mc_var], f_cont/f_line (K,1,nbins), f_cont_raw, continuum (K,1),
+    incl_deg, aperture_kpc, extent_kpc, nx, vel_rebin, n_cont, n_line, params.
+    Returns None if any subrun failed.
+    """
+    if incls is None:
+        raise ValueError("simulate_cube_decomposed requires `incls`")
+    incls = list(incls)
+    os.makedirs(rundir, exist_ok=True)
+    rundir_thor = runner.to_thor_path(rundir)
+
+    p_run = {**params, "incls": incls}
+    for source in ("cont", "line"):                       # line runs UNCONDITIONALLY
+        n = n_cont if source == "cont" else n_line
+        conf = cfg.make_conf(p_run, rundir_thor, source, n)
+        label = f"{os.path.basename(rundir)}/{source}"
+        if not run_subrun(runner, os.path.join(rundir, source), conf, label, n_los=len(incls)):
+            return None
+
+    apertures = np.asarray([R_VIR_KPC])
+    us = extract.unit_scales(n_cont, n_line)
+    try:
+        parts = {}
+        for src in ("cont", "line"):
+            sc = {src: us[src]}
+            grid = extract.peel_grid(rundir, p_run, n_cont, n_line, incls, apertures,
+                                     want_var=want_mc_var, scales=sc)
+            cube = extract.peel_cube(rundir, p_run, n_cont, n_line, incls,
+                                     extent_kpc=extent_kpc, nx=nx, vel_rebin=vel_rebin,
+                                     want_var=want_mc_var, scales=sc)
+            parts[src] = (grid, cube)
+    except Exception as e:
+        print(f"[extract] {os.path.basename(rundir)}: corrupt/unreadable peel output "
+              f"({type(e).__name__}: {e}) — marking run failed", flush=True)
+        return None
+
+    (fg_c, cg_c), (fg_l, cg_l) = parts["cont"], parts["line"]
+    f_cont_raw, f_cont_var = fg_c if want_mc_var else (fg_c, None)
+    cube_cont, cube_cont_var = cg_c if want_mc_var else (cg_c, None)
+    f_line_raw, f_line_var = fg_l if want_mc_var else (fg_l, None)
+    cube_line, cube_line_var = cg_l if want_mc_var else (cg_l, None)
+
+    f_cont_raw = np.asarray(f_cont_raw, dtype=float)
+    K = f_cont_raw.shape[0]
+    cont = np.ones((K, 1))
+    f_cont, f_line = f_cont_raw.copy(), np.asarray(f_line_raw, dtype=float).copy()
+    for k in range(K):
+        c = extract.continuum_level(f_cont_raw[k, 0], VELOCITY)
+        cont[k, 0] = c
+        if c > 0:
+            f_cont[k] /= c; f_line[k] /= c
+            cube_cont[k] = cube_cont[k] / c; cube_line[k] = cube_line[k] / c
+            if want_mc_var:
+                cube_cont_var[k] = cube_cont_var[k] / c ** 2
+                cube_line_var[k] = cube_line_var[k] / c ** 2
+
+    out = {
+        "v": VELOCITY, "cube_cont": cube_cont, "cube_line": cube_line,
+        "f_cont": f_cont, "f_line": f_line, "f_cont_raw": f_cont_raw, "continuum": cont,
+        "n_cont": n_cont, "n_line": n_line,
+        "incl_deg": np.asarray(incls, dtype=float), "aperture_kpc": apertures,
+        "extent_kpc": float(extent_kpc), "nx": int(nx), "vel_rebin": int(vel_rebin),
+        "params": dict(params),
+    }
+    if want_mc_var:
+        out["cube_cont_mc_var"] = np.asarray(cube_cont_var, dtype=float)
+        out["cube_line_mc_var"] = np.asarray(cube_line_var, dtype=float)
+    return out
+
+
 # Re-export the canonical grid for convenience.
-__all__ = ["simulate", "simulate_multi", "simulate_cube", "VELOCITY", "NBINS_PEEL"]
+__all__ = ["simulate", "simulate_multi", "simulate_cube", "simulate_cube_decomposed",
+           "VELOCITY", "NBINS_PEEL"]

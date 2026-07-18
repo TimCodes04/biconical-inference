@@ -16,6 +16,12 @@ set -euo pipefail
 cd "$SLURM_SUBMIT_DIR"
 mkdir -p logs
 export OMP_NUM_THREADS="${SLURM_CPUS_PER_TASK:-16}"
-.venv/bin/python scripts/thor_cube_sweep.py \
-    --gen-config configs/sherlock_spaxel.yaml --scratch "$SCRATCH/cube_sweep"
+# Extra args pass through to the sweep script (e.g. --scratch ... --emission 5.0);
+# with no args, the continuum-only default sweep runs.
+if [ "$#" -gt 0 ]; then
+    .venv/bin/python scripts/thor_cube_sweep.py "$@"
+else
+    .venv/bin/python scripts/thor_cube_sweep.py \
+        --gen-config configs/sherlock_spaxel.yaml --scratch "$SCRATCH/cube_sweep"
+fi
 echo "[cube-sweep] done $(date)"

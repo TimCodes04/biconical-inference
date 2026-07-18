@@ -1,0 +1,61 @@
+# Sherlock production — DECOMPOSED-EMISSION spaxel-cube library (schema v4).
+#
+# Same transports/geometry/grid as the continuum spaxel run, plus THOR's `line` subrun
+# (intrinsic MgII doublet, K:H = 2:1) run UNCONDITIONALLY per transport and stored as a
+# separate UNIT-EW cube component: the library holds (cube_cont, cube_line) per row and
+# EW ∈ [0, 10] A becomes a COMPOSITION-TIME parameter — sampled fresh at NPE training
+# (x = cont + EW*line, the 7-param model configs/spaxel7em.yaml), never re-simulated.
+# EW is NOT a design column: the LHS still covers only the 5 transport params.
+#
+# >>> SUBMIT ONLY after the emission cube-sweep (job 34509229) confirms the vexp
+# >>> information gain, and set n_line/--time from its measured run times.
+
+library:
+  root: $SCRATCH/bicone_spaxel_em
+  out:  $SCRATCH/bicone_spaxel_em/library_spaxel_em.h5
+  n_sims: 10000                        # transport RUNS (rows = n_sims * n_los)
+  method: lhs
+  seed: 9                              # FRESH design (continuum spaxel run used seed 3)
+  incl_seed: 10
+  n_los: 6
+  n_cont: 1000000
+  n_line: 400000                       # unit-EW line component budget; VERIFY vs sweep timing
+  want_mc_var: true
+  cleanup_outputs: true
+  cube:
+    extent_kpc: 60.0
+    nx: 24
+    vel_rebin: 4
+    decompose_emission: true           # -> simulate_cube_decomposed; marker gains cube_line
+
+thor:
+  mode: native
+  thor_bin: $HOME/thor_acpp.sh
+
+splits: splits/reserved_test_spaxel_em.json
+
+free_params: [logN, theta, av, incl, vexp_kms, disk_logN]
+param_bounds:
+  logN:      [11.0, 16.0]
+  theta:     [15.0, 82.0]
+  av:        [0.5,  2.0]
+  incl:      [0.0,  90.0]
+  vexp_kms:  [50.0, 600.0]
+  disk_logN: [13.0, 16.0]
+
+fixed:
+  nphotons_step_max: 250000
+  ew: 0.0                   # composition EW is a TRAINING-time draw; the line subrun is
+                            #   forced by decompose_emission regardless of this value
+  sigmasrc_kms: 100.0
+  sigmaran_kms: 100.0
+  mass_conservation: true
+  outer_radius_box: 0.4
+  disk_on: true
+  disk_radius_box: 0.04
+  disk_height_box: 0.004
+  disk_tau_dust: 0.0
+  disk_sigma_kms: 50.0
+  source: point
+
+device: auto

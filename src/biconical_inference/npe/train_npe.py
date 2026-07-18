@@ -22,7 +22,12 @@ from ..prior import Prior
 from .embedding import build_cube_embedding, build_embedding
 from .flow import NPE, Flow
 from .priors import build_prior
-from .simulator import CubeLibrarySimulator, LibrarySimulator, Simulator
+from .simulator import (
+    CubeLibrarySimulator,
+    EmissionCubeSimulator,
+    LibrarySimulator,
+    Simulator,
+)
 
 
 def _generate(sim, n, chunk=20000):
@@ -46,8 +51,11 @@ def train(cfg):
     # the unique training rows per epoch; "emulator" (default) draws through the trained emulator
     # + independent per-bin noise.
     train_source = npe_cfg.get("train_source", "emulator")
-    sim_cube = None
-    if train_source == "library_cube":
+    sim_cube, em_mode = None, False
+    if train_source == "library_cube_em":
+        # 7-param emission model: EW composed at train time (fresh per epoch via the Dataset)
+        sim_cube, em_mode = EmissionCubeSimulator(cfg, seed=npe_cfg.get("seed", 0)), True
+    elif train_source == "library_cube":
         sim_cube = CubeLibrarySimulator(cfg, seed=npe_cfg.get("seed", 0))
         theta, x = sim_cube.all_rows()                             # (M,dim) f32, (M,nx,nx,nvel) f16
     elif train_source == "library":
@@ -65,13 +73,14 @@ def train(cfg):
         n = npe_cfg.get("n_amortized_sims", 400000)
         print(f"[npe] generating {n} (theta, x) pairs …", flush=True)
         theta, x = _generate(sim, n)                               # (n,6), (n,256) float32
+    dim = len(prior.names)
 
     # (2) The model: embedding CNN + conditional flow, trained JOINTLY.
     if sim_cube is not None:
         embedding = build_cube_embedding(sim_cube.cube_shape, n_features=n_feat)
     else:
         embedding = build_embedding(n_velbins=x.shape[1], n_features=n_feat)
-    flow = Flow(dim=theta.shape[1], context_dim=n_feat, z_lo=prior.z_lo, z_hi=prior.z_hi,
+    flow = Flow(dim=dim, context_dim=n_feat, z_lo=prior.z_lo, z_hi=prior.z_hi,
                 n_layers=npe_cfg.get("num_transforms", 8),
                 hidden=npe_cfg.get("hidden_features", 128))
     npe = NPE(embedding, flow).to(device)
@@ -91,14 +100,20 @@ def train(cfg):
     # forward model with unchanged labels — free effective data doubling, applied per-batch.
     augment_flip = sim_cube is not None
 
-    # train/val split of the simulated pairs (val = a small held-out slice for early stopping)
-    n_val = max(1, int(0.05 * theta.shape[0]))
-    tl = DataLoader(TensorDataset(theta[n_val:], x[n_val:]),
-                    batch_size=npe_cfg.get("batch_size", 1024), shuffle=True)
-    # Cube batches explode in the spectral stage (batch*576 spaxel-spectra at once), so the
-    # val pass must use the same small batch as training — 4096 cubes OOM'd MPS (~19 GB).
+    # train/val split (val = a small held-out slice for early stopping). Cube batches
+    # explode in the spectral stage (batch*576 spaxel-spectra at once), so cube-mode val
+    # uses the same small batch as training — 4096 cubes OOM'd MPS (~19 GB).
     vb = npe_cfg.get("batch_size", 1024) if sim_cube is not None else 4096
-    vl = DataLoader(TensorDataset(theta[:n_val], x[:n_val]), batch_size=vb)
+    if em_mode:
+        tr_idx, va_idx = sim_cube.split_indices(0.05)
+        tl = DataLoader(sim_cube.dataset(tr_idx, train=True),
+                        batch_size=npe_cfg.get("batch_size", 1024), shuffle=True)
+        vl = DataLoader(sim_cube.dataset(va_idx, train=False), batch_size=vb)
+    else:
+        n_val = max(1, int(0.05 * theta.shape[0]))
+        tl = DataLoader(TensorDataset(theta[n_val:], x[n_val:]),
+                        batch_size=npe_cfg.get("batch_size", 1024), shuffle=True)
+        vl = DataLoader(TensorDataset(theta[:n_val], x[:n_val]), batch_size=vb)
 
     best, patience, bad = float("inf"), npe_cfg.get("stop_after_epochs", 20), 0
     if npe_cfg.get("resume"):
@@ -138,7 +153,8 @@ def train(cfg):
             best, bad = vloss, 0
             _save(cfg, npe, prior, n_feat,
                   extra=None if sim_cube is None else
-                  {"observable": "cube", "cube_shape": list(sim_cube.cube_shape),
+                  {"observable": "cube_em" if em_mode else "cube",
+                   "cube_shape": list(sim_cube.cube_shape),
                    **{f"cube_{k}": v for k, v in sim_cube.cube_meta.items()}})
         else:
             bad += 1

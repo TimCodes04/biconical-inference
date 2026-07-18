@@ -179,6 +179,111 @@ class CubeLibrarySimulator:
                 torch.as_tensor(self.cubes[order]))
 
 
+class EmissionCubeSimulator:
+    """(theta, x) for the 7-parameter emission model: EW is a COMPOSITION-TIME parameter.
+
+    The v4 library stores per-row continuum cubes and UNIT-EW line cubes (same photons,
+    K:H = 2:1); a training example composes x = cube_cont + EW * cube_line with EW drawn
+    fresh from its prior — so every epoch sees new EW realizations (free conditioning
+    augmentation) without any re-simulation. The label vector is the 6 library params
+    (mapped by name) plus the drawn EW in z-space, ordered by the model prior's names.
+
+    `dataset(train=...)` returns torch Datasets: TRAIN draws fresh EW per access; VAL uses
+    a deterministic per-row EW (stable early stopping).
+    """
+
+    def __init__(self, cfg, seed=0):
+        import h5py
+
+        from .. import splits
+        from ..library import load_library
+        from ..prior import Prior
+        from ..quality import valid_mask
+
+        path = cfg["library"]["out"]
+        lib = load_library(path)
+        if not lib.get("has_line"):
+            raise ValueError(f"{path} has no /cubes_line — generate with "
+                             f"library.cube.decompose_emission (schema v4)")
+        self.prior = Prior.from_config(cfg)
+        names = list(self.prior.names)
+        if "ew" not in names:
+            raise ValueError("EmissionCubeSimulator needs 'ew' in free_params")
+        self.j_ew = names.index("ew")
+        lib_names = [n.decode() if isinstance(n, bytes) else str(n) for n in lib["param_names"]]
+        self.lib_cols = [(j, lib_names.index(nm)) for j, nm in enumerate(names) if nm != "ew"]
+
+        z_full = lib["params_z"].astype(np.float32)
+        vm = valid_mask(lib["spectra"].astype(np.float32))
+        vm_row = vm if vm.ndim == 1 else vm.all(axis=1)
+        keep = (~splits.test_mask(z_full, run_id=lib.get("run_id"),
+                                  aperture_kpc=lib.get("aperture_kpc"),
+                                  path=cfg.get("splits", splits.DEFAULT_PATH))) & vm_row
+        with h5py.File(path, "r") as f:
+            self.cont = f["cubes"].astype(np.float16)[...][keep]
+            self.line = f["cubes_line"].astype(np.float16)[...][keep]
+        self.z_lib = z_full[keep]
+        self.cube_shape = tuple(self.cont.shape[1:])
+        self.cube_meta = {"extent_kpc": lib["cube_extent_kpc"], "nx": lib["cube_nx"],
+                          "vel_rebin": lib["cube_vel_rebin"]}
+        self.ew_lo = float(self.prior.lo[self.j_ew])
+        self.ew_hi = float(self.prior.hi[self.j_ew])
+        self.rng = np.random.default_rng(seed)
+        self.seed = seed
+        print(f"[emsim] {self.z_lib.shape[0]} train rows  cube {self.cube_shape}  "
+              f"params={names}  EW U[{self.ew_lo},{self.ew_hi}] composed at train time",
+              flush=True)
+
+    def _theta(self, idx, ew):
+        """Model-order z labels for library rows idx with drawn (physical) EW values."""
+        th = np.empty((len(idx), len(self.prior.names)), dtype=np.float32)
+        for j, cj in self.lib_cols:
+            th[:, j] = self.z_lib[idx, cj]
+        th[:, self.j_ew] = ew                              # linear transform: z == physical
+        return th
+
+    def compose(self, idx, ew):
+        return (self.cont[idx].astype(np.float32)
+                + ew[:, None, None, None].astype(np.float32) * self.line[idx].astype(np.float32))
+
+    def sample(self, n):
+        idx = self.rng.integers(0, self.z_lib.shape[0], size=n)
+        ew = self.rng.uniform(self.ew_lo, self.ew_hi, size=n).astype(np.float32)
+        return (torch.as_tensor(self._theta(idx, ew)),
+                torch.as_tensor(self.compose(idx, ew)))
+
+    def dataset(self, indices, train=True):
+        return _ComposedEmissionDataset(self, np.asarray(indices), train=train)
+
+    def split_indices(self, val_frac=0.05):
+        order = self.rng.permutation(self.z_lib.shape[0])
+        n_val = max(1, int(val_frac * order.size))
+        return order[n_val:], order[:n_val]
+
+
+class _ComposedEmissionDataset(torch.utils.data.Dataset):
+    """Composes one (theta, x) per access. TRAIN: fresh EW every access (a new draw each
+    epoch); VAL: deterministic per-row EW so the early-stopping metric is stable."""
+
+    def __init__(self, sim, indices, train=True):
+        self.sim, self.idx, self.train = sim, indices, train
+        base = np.random.default_rng(sim.seed + 991)
+        self.val_ew = base.uniform(sim.ew_lo, sim.ew_hi, size=indices.size).astype(np.float32)
+        self.rng = np.random.default_rng(sim.seed + 313)
+
+    def __len__(self):
+        return self.idx.size
+
+    def __getitem__(self, i):
+        row = self.idx[i]
+        ew = (np.float32(self.rng.uniform(self.sim.ew_lo, self.sim.ew_hi)) if self.train
+              else self.val_ew[i])
+        x = (self.sim.cont[row].astype(np.float32)
+             + ew * self.sim.line[row].astype(np.float32))
+        th = self.sim._theta(np.array([row]), np.array([ew]))[0]
+        return torch.as_tensor(th), torch.as_tensor(x)
+
+
 def _apply_lsf_batch(mu, lsf_fwhm_kms, dv_kms, quantum=0.05):
     """Per-row Gaussian LSF (instrument line-spread) on a (N, nbins) batch, vectorized by
     grouping rows with near-equal kernel width. Kept for the app's χ²-gate / candidate refit

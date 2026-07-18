@@ -46,6 +46,10 @@ _DEFAULT_SPEC = [
 # but NOT part of Prior.default() so the canonical wind-only space is unchanged).
 _OPTIONAL_SPEC = [
     ("disk_logN",    13.0,  17.0,   "linear"),   # log10 DISK MgII column [cm^-2]
+    ("ew",            0.0,  10.0,   "linear"),   # intrinsic MgII doublet EW [A] (K:H = 2:1).
+                                                 #   A COMPOSITION-TIME parameter: the library
+                                                 #   stores unit-EW line components; training
+                                                 #   composes cont + EW*line on the fly.
 ]
 
 

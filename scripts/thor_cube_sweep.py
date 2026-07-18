@@ -52,6 +52,11 @@ def generate(args):
 
     cfg = yaml.safe_load(open(args.gen_config))
     fixed = dict(cfg.get("fixed", {}))
+    if args.emission > 0:
+        # EMISSION MODE: intrinsic MgII doublet at this EW — flips on THOR's `line` subrun
+        # (sources_for), composed by composition_scales exactly as the _em 1-D family does.
+        fixed["ew"] = float(args.emission)
+        print(f"[sweep] EMISSION mode: EW={args.emission} A, n_line={args.n_line}", flush=True)
     cube = cfg["library"]["cube"]
     scratch = os.path.abspath(os.path.expandvars(os.path.expanduser(args.scratch)))
     ptdir = os.path.join(scratch, "points")
@@ -66,7 +71,8 @@ def generate(args):
         t0 = time.time()
         params = {**fixed, **p}
         res = simulate_cube(params, os.path.join(scratch, tag), runner,
-                            n_cont=N_CONT, n_line=0, incls=[0.0],
+                            n_cont=N_CONT,
+                            n_line=(args.n_line if args.emission > 0 else 0), incls=[0.0],
                             extent_kpc=float(cube["extent_kpc"]), nx=int(cube["nx"]),
                             vel_rebin=int(cube["vel_rebin"]), want_mc_var=True)
         if res is None:
@@ -140,12 +146,12 @@ def analyze(args):
     axes[1].legend(fontsize=8)
     fig.tight_layout()
     os.makedirs(args.out, exist_ok=True)
-    fig.savefig(os.path.join(args.out, "cube_sweep_detectability.png"), dpi=120)
-    with open(os.path.join(args.out, "cube_sweep.json"), "w") as fh:
+    fig.savefig(os.path.join(args.out, f"cube_sweep{args.label}_detectability.png"), dpi=120)
+    with open(os.path.join(args.out, f"cube_sweep{args.label}.json"), "w") as fh:
         json.dump({"reference": REF, "n_cont": N_CONT, "rows": rows,
                    "adjacent_z_per_step": [{"v_mid": m, "z": z, "dv": dv} for m, z, dv in adj]},
                   fh, indent=2)
-    print(f"[sweep] plate + JSON -> {args.out}/")
+    print(f"[sweep] plate + JSON -> {args.out}/ (label {args.label!r})")
 
 
 def main():
@@ -156,6 +162,11 @@ def main():
     ap.add_argument("--analyze-only", action="store_true")
     ap.add_argument("--points", default="validation/spaxel6/info_audit/cube_sweep")
     ap.add_argument("--out", default="validation/spaxel6/info_audit")
+    ap.add_argument("--emission", type=float, default=0.0,
+                    help="intrinsic MgII EW [A]; >0 adds THOR's line subrun")
+    ap.add_argument("--n-line", type=int, default=400_000,
+                    help="line-subrun photon budget (emission mode)")
+    ap.add_argument("--label", default="", help="output filename suffix (e.g. _em)")
     args = ap.parse_args()
     if args.analyze_only:
         analyze(args)
