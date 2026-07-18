@@ -1,0 +1,135 @@
+{
+  "r_split_kpc": 10.0,
+  "n_rows": 300,
+  "caveat": "occluded inputs are off-distribution; deltas qualitative",
+  "table": {
+    "full": {
+      "logN": {
+        "r": 0.996,
+        "abserr_pct": 0.33,
+        "width_pct": 0.71
+      },
+      "theta": {
+        "r": 0.995,
+        "abserr_pct": 0.88,
+        "width_pct": 1.49
+      },
+      "av": {
+        "r": 0.872,
+        "abserr_pct": 5.01,
+        "width_pct": 6.84
+      },
+      "incl": {
+        "r": 0.996,
+        "abserr_pct": 0.37,
+        "width_pct": 0.68
+      },
+      "vexp_kms": {
+        "r": 0.234,
+        "abserr_pct": 15.97,
+        "width_pct": 30.6
+      },
+      "disk_logN": {
+        "r": 0.996,
+        "abserr_pct": 0.35,
+        "width_pct": 0.57
+      }
+    },
+    "center-only": {
+      "logN": {
+        "r": 0.992,
+        "abserr_pct": 1.43,
+        "width_pct": 1.02
+      },
+      "theta": {
+        "r": 0.959,
+        "abserr_pct": 2.96,
+        "width_pct": 1.92
+      },
+      "av": {
+        "r": 0.336,
+        "abserr_pct": 33.82,
+        "width_pct": 1.91
+      },
+      "incl": {
+        "r": 0.946,
+        "abserr_pct": 1.28,
+        "width_pct": 0.9
+      },
+      "vexp_kms": {
+        "r": 0.015,
+        "abserr_pct": 18.95,
+        "width_pct": 30.79
+      },
+      "disk_logN": {
+        "r": 0.92,
+        "abserr_pct": 0.62,
+        "width_pct": 0.6
+      }
+    },
+    "halo-only": {
+      "logN": {
+        "r": 0.741,
+        "abserr_pct": 22.07,
+        "width_pct": 4.6
+      },
+      "theta": {
+        "r": 0.524,
+        "abserr_pct": 17.71,
+        "width_pct": 26.92
+      },
+      "av": {
+        "r": 0.162,
+        "abserr_pct": 25.43,
+        "width_pct": 19.2
+      },
+      "incl": {
+        "r": 0.232,
+        "abserr_pct": 16.95,
+        "width_pct": 6.02
+      },
+      "vexp_kms": {
+        "r": 0.105,
+        "abserr_pct": 17.32,
+        "width_pct": 30.84
+      },
+      "disk_logN": {
+        "r": -0.133,
+        "abserr_pct": 28.7,
+        "width_pct": 16.31
+      }
+    },
+    "collapsed": {
+      "logN": {
+        "r": 0.507,
+        "abserr_pct": 16.45,
+        "width_pct": 2.89
+      },
+      "theta": {
+        "r": 0.213,
+        "abserr_pct": 27.6,
+        "width_pct": 1.38
+      },
+      "av": {
+        "r": 0.047,
+        "abserr_pct": 34.57,
+        "width_pct": 6.44
+      },
+      "incl": {
+        "r": 0.668,
+        "abserr_pct": 19.98,
+        "width_pct": 3.5
+      },
+      "vexp_kms": {
+        "r": 0.113,
+        "abserr_pct": 20.63,
+        "width_pct": 27.43
+      },
+      "disk_logN": {
+        "r": 0.465,
+        "abserr_pct": 13.04,
+        "width_pct": 0.93
+      }
+    }
+  }
+}

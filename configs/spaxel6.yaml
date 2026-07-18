@@ -41,9 +41,10 @@ npe:
   num_transforms: 8
   batch_size: 64             # v2's spectral stage holds (batch*576 spaxels, 32ch, nvel)
                              #   activations — 256 OOM'd MPS (~6 GB single alloc); 64 fits
-  lr: 0.0001                 # annealing leg 2 (--resume from the 150-epoch v2 run, which hit
-                             #   its ceiling still improving at lr 2e-4): lower peak, longer
-                             #   cosine — chase the val floor + let calibration settle
+  lr: 0.00003                # annealing leg 2 (--resume): peak must stay BELOW the basin's
+                             #   escape velocity — resuming at 1e-4 with fresh Adam state
+                             #   kicked the model out of its annealed minimum (-9.75 -> -8.2)
+                             #   and patience would have killed the leg before recovery
   stop_after_epochs: 30      # epochs = passes over the ~unique training rows (no re-noising)
   max_num_epochs: 300        # also the cosine T_max
   seed: 0
