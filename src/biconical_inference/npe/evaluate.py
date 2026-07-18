@@ -71,11 +71,15 @@ def tarp_credibility(u_samples, u_truth, u_ref):
 def tarp_ecp(fs, n_alpha=51):
     """Expected-coverage-probability curve from TARP credibilities: ECP(alpha) = fraction of
     trials with f <= alpha. Calibrated -> ECP == alpha (the diagonal). Returns (alphas, ecp,
-    max |ECP - alpha|); ECP above the diagonal = underconfident, below = overconfident."""
+    max |ECP - alpha|); ECP above the diagonal = underconfident, below = overconfident.
+    The max-deviation excludes the endpoints: with finitely many posterior draws, f has
+    atoms at exactly 0/1 (truth outside every draw), which inflate |ECP - alpha| at the
+    boundary without carrying calibration information."""
     fs = np.asarray(fs, dtype=float)
     alphas = np.linspace(0, 1, n_alpha)
     ecp = np.array([(fs <= a).mean() for a in alphas])
-    return alphas, ecp, float(np.max(np.abs(ecp - alphas)))
+    dev = float(np.max(np.abs(ecp - alphas)[1:-1]))
+    return alphas, ecp, dev
 
 
 def npe_metrics(sample_fn, z_test, flux_test, prior, instrument,

@@ -75,6 +75,12 @@ def train(cfg):
                 n_layers=npe_cfg.get("num_transforms", 8),
                 hidden=npe_cfg.get("hidden_features", 128))
     npe = NPE(embedding, flow).to(device)
+    # --resume: warm-start from the existing checkpoint (same architecture) for a further
+    # annealing leg — used when a run hit max_num_epochs still improving.
+    if npe_cfg.get("resume"):
+        prev = torch.load(npe_cfg["ckpt"], map_location=device, weights_only=False)
+        npe.load_state_dict(prev["state_dict"])
+        print(f"[npe] resumed weights from {npe_cfg['ckpt']}", flush=True)
     opt = torch.optim.Adam(npe.parameters(), lr=npe_cfg.get("lr", 5e-4))
     # Cosine decay to ~0 over the epoch budget: the v1 cube run at a flat 5e-4 oscillated in
     # a 7.1-8.2 sawtooth (and spiked 300x once) — annealing lets it settle into the minimum.
@@ -89,9 +95,20 @@ def train(cfg):
     n_val = max(1, int(0.05 * theta.shape[0]))
     tl = DataLoader(TensorDataset(theta[n_val:], x[n_val:]),
                     batch_size=npe_cfg.get("batch_size", 1024), shuffle=True)
-    vl = DataLoader(TensorDataset(theta[:n_val], x[:n_val]), batch_size=4096)
+    # Cube batches explode in the spectral stage (batch*576 spaxel-spectra at once), so the
+    # val pass must use the same small batch as training — 4096 cubes OOM'd MPS (~19 GB).
+    vb = npe_cfg.get("batch_size", 1024) if sim_cube is not None else 4096
+    vl = DataLoader(TensorDataset(theta[:n_val], x[:n_val]), batch_size=vb)
 
     best, patience, bad = float("inf"), npe_cfg.get("stop_after_epochs", 20), 0
+    if npe_cfg.get("resume"):
+        # Never let a worse early epoch of the resumed leg overwrite the stored best:
+        # initialize `best` from the loaded weights' actual val loss.
+        npe.eval()
+        with torch.no_grad():
+            best = sum((-npe.log_prob(th.to(device), xx.to(device).float()).mean()).item()
+                       for th, xx in vl) / len(vl)
+        print(f"[npe] resume baseline val_nll={best:.4f}", flush=True)
     for epoch in range(npe_cfg.get("max_num_epochs", 300)):
         npe.train()
         for th, xx in tl:
@@ -153,12 +170,16 @@ def main():
     ap.add_argument("--config", default="configs/rvir6.yaml")
     ap.add_argument("--ckpt", default=None, help="override npe.ckpt output path")
     ap.add_argument("--n", type=int, default=None, help="override n_amortized_sims")
+    ap.add_argument("--resume", action="store_true",
+                    help="warm-start from npe.ckpt (same architecture) for a further leg")
     args = ap.parse_args()
     cfg = yaml.safe_load(open(args.config))
     if args.ckpt:
         cfg["npe"]["ckpt"] = args.ckpt
     if args.n:
         cfg["npe"]["n_amortized_sims"] = args.n
+    if args.resume:
+        cfg["npe"]["resume"] = True
     train(cfg)
 
 

@@ -39,11 +39,13 @@ npe:
   embedding_features: 32     # the cube carries far more structure than a 1-D spectrum
   hidden_features: 128
   num_transforms: 8
-  batch_size: 256
-  lr: 0.0002                 # v1 at 5e-4 oscillated (7.1-8.2 sawtooth + one 300x spike);
-                             #   2e-4 + cosine annealing (train_npe) settles the descent
-  stop_after_epochs: 25      # epochs = passes over the ~unique training rows (no re-noising)
-  max_num_epochs: 150        # also the cosine T_max — anneals to ~0 within a realistic run
+  batch_size: 64             # v2's spectral stage holds (batch*576 spaxels, 32ch, nvel)
+                             #   activations — 256 OOM'd MPS (~6 GB single alloc); 64 fits
+  lr: 0.0001                 # annealing leg 2 (--resume from the 150-epoch v2 run, which hit
+                             #   its ceiling still improving at lr 2e-4): lower peak, longer
+                             #   cosine — chase the val floor + let calibration settle
+  stop_after_epochs: 30      # epochs = passes over the ~unique training rows (no re-noising)
+  max_num_epochs: 300        # also the cosine T_max
   seed: 0
   ckpt: ./checkpoints/npe_spaxel6.pt
 device: auto
