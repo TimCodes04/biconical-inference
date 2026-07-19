@@ -77,7 +77,8 @@ def train(cfg):
 
     # (2) The model: embedding CNN + conditional flow, trained JOINTLY.
     if sim_cube is not None:
-        embedding = build_cube_embedding(sim_cube.cube_shape, n_features=n_feat)
+        embedding = build_cube_embedding(sim_cube.cube_shape, n_features=n_feat,
+                                         moments=npe_cfg.get("moment_channels", False))
     else:
         embedding = build_embedding(n_velbins=x.shape[1], n_features=n_feat)
     flow = Flow(dim=dim, context_dim=n_feat, z_lo=prior.z_lo, z_hi=prior.z_hi,
@@ -155,6 +156,7 @@ def train(cfg):
                   extra=None if sim_cube is None else
                   {"observable": "cube_em" if em_mode else "cube",
                    "cube_shape": list(sim_cube.cube_shape),
+                   "cube_moments": bool(npe_cfg.get("moment_channels", False)),
                    **{f"cube_{k}": v for k, v in sim_cube.cube_meta.items()}})
         else:
             bad += 1

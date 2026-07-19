@@ -39,6 +39,26 @@ def test_cube_embedding_single_spaxel_sensitivity():
     assert not torch.allclose(emb(x), emb(y))
 
 
+def test_moment_channel_variant():
+    """Moment-channel CubeCNN: correct output shape, and the internal moment computation
+    matches an independent numpy implementation (flux / centroid / dispersion)."""
+    from biconical_inference.npe.embedding import CubeCNN
+
+    emb = build_cube_embedding(SHAPE, n_features=32, moments=True).eval()
+    x = _cube(3).abs()                     # flux-like positivity for meaningful moments
+    assert emb(x).shape == (3, 32)
+
+    m = CubeCNN.moment_channels(x).numpy()
+    xn = x.numpy()
+    vc = (-1300 + (np.arange(SHAPE[-1]) + 0.5) * 3400 / SHAPE[-1]) / 1000.0
+    m0 = xn.sum(-1)
+    m1 = np.where(m0 > 0, (xn * vc).sum(-1) / np.maximum(m0, 1e-12), 0)
+    var = np.where(m0 > 0, (xn * vc**2).sum(-1) / np.maximum(m0, 1e-12) - m1**2, 0)
+    assert np.allclose(m[:, 0], m0, atol=1e-4)
+    assert np.allclose(m[:, 1], m1, atol=1e-4)
+    assert np.allclose(m[:, 2], np.sqrt(np.clip(var, 0, None)), atol=1e-3)
+
+
 def test_cube_embedding_rejects_bad_grids():
     with pytest.raises(ValueError):
         build_cube_embedding((16, 8, 64))  # not square

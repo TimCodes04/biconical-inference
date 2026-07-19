@@ -175,7 +175,8 @@ def load_npe(ckpt_path, device="cpu"):
     ckpt = torch.load(ckpt_path, map_location=device, weights_only=False)
     dim, n_feat = len(ckpt["param_names"]), ckpt["n_features"]
     if "cube_shape" in ckpt:
-        embedding = build_cube_embedding(tuple(ckpt["cube_shape"]), n_features=n_feat)
+        embedding = build_cube_embedding(tuple(ckpt["cube_shape"]), n_features=n_feat,
+                                         moments=ckpt.get("cube_moments", False))
     else:
         embedding = build_embedding(n_velbins=ckpt["n_velbins"], n_features=n_feat)
     flow = Flow(dim=dim, context_dim=n_feat, z_lo=ckpt["z_lo"], z_hi=ckpt["z_hi"],

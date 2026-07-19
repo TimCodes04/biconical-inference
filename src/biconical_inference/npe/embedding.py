@@ -76,7 +76,7 @@ class CubeCNN(nn.Module):
          kinematic signal for free while the spatial stage adds what only the cube has.
     """
 
-    def __init__(self, cube_shape, n_features=32):
+    def __init__(self, cube_shape, n_features=32, moments=False):
         super().__init__()
         nx, nx2, nvel = cube_shape
         if nx != nx2:
@@ -84,15 +84,22 @@ class CubeCNN(nn.Module):
         if nvel % 8 or nx % 4:
             raise ValueError(f"cube_shape {cube_shape} needs nvel % 8 == 0 and nx % 4 == 0")
         self.cube_shape = tuple(cube_shape)
+        # Moment channels (info-audit finding): a per-spaxel velocity CENTROID is a ratio
+        # of noisy sums — an operation the conv stack demonstrably fails to learn from
+        # ~2-photon cells (moment-map regressor: vexp r 0.42 vs 0.28 for every conv rung).
+        # Computing flux/centroid/dispersion explicitly and feeding them as spatial
+        # channels hands the network the kinematic map it cannot build itself.
+        self.moments = bool(moments)
         self.spectral = nn.Sequential(       # (N, 1, nvel) -> (N, 32, nvel//2)
             nn.Conv1d(1, 32, 7, padding=3), nn.SiLU(), nn.MaxPool1d(2),
             nn.Conv1d(32, 32, 5, padding=2), nn.SiLU(),
         )
         spec_dim = 32 * (nvel // 2)          # one spaxel's flattened spectral features
         self.reduce = nn.Conv2d(spec_dim, 128, 1)   # per-spaxel linear compression
-        self.spatial = nn.Sequential(        # (B, 128, nx, nx) -> (B, 32, nx//4, nx//4)
+        self.spatial = nn.Sequential(        # (B, 128(+3), nx, nx) -> (B, 32, nx//4, nx//4)
             nn.SiLU(),
-            nn.Conv2d(128, 64, 3, padding=1), nn.SiLU(), nn.MaxPool2d(2),
+            nn.Conv2d(128 + (3 if self.moments else 0), 64, 3, padding=1),
+            nn.SiLU(), nn.MaxPool2d(2),
             nn.Conv2d(64, 32, 3, padding=1), nn.SiLU(), nn.MaxPool2d(2),
         )
         self.collapsed = nn.Sequential(      # (B, 1, nvel) -> (B, 64): the aperture view
@@ -105,6 +112,23 @@ class CubeCNN(nn.Module):
             nn.Linear(128, n_features),
         )
 
+    @staticmethod
+    def moment_channels(x):
+        """(B, nx, nx, nvel) -> (B, 3, nx, nx): per-spaxel flux, velocity centroid and
+        dispersion (velocities in 1000 km/s units over the canonical span; empty spaxels
+        get 0). Pure functions of the input — no parameters."""
+        from ..thor_sim.constants import SPEC_VMAX, SPEC_VMIN
+        nvel = x.shape[-1]
+        vc = (SPEC_VMIN + (torch.arange(nvel, device=x.device, dtype=x.dtype) + 0.5)
+              * (SPEC_VMAX - SPEC_VMIN) / nvel) / 1000.0
+        m0 = x.sum(-1)
+        safe = m0.clamp(min=1e-12)
+        m1 = torch.where(m0 > 0, (x * vc).sum(-1) / safe, torch.zeros_like(m0))
+        var = torch.where(m0 > 0, (x * vc ** 2).sum(-1) / safe - m1 ** 2,
+                          torch.zeros_like(m0))
+        m2 = var.clamp(min=0).sqrt()
+        return torch.stack([m0, m1, m2], dim=1)
+
     def forward(self, x):
         """(B, nx, nx, nvel) -> (B, n_features)."""
         B, nx, _, nvel = x.shape
@@ -114,10 +138,13 @@ class CubeCNN(nn.Module):
         # channel dim moves without scrambling the (nx, nx) layout
         s = s.reshape(B, nx * nx, -1).permute(0, 2, 1)         # (B, spec_dim, nx*nx)
         s = s.reshape(B, -1, nx, nx)                           # (B, spec_dim, nx, nx)
-        s = self.spatial(self.reduce(s)).flatten(1)            # (B, 32*(nx//4)^2)
+        s = self.reduce(s)                                     # (B, 128, nx, nx)
+        if self.moments:
+            s = torch.cat([s, self.moment_channels(x)], dim=1)  # (B, 131, nx, nx)
+        s = self.spatial(s).flatten(1)                         # (B, 32*(nx//4)^2)
         c = self.collapsed(x.sum(dim=(1, 2)).unsqueeze(1))     # (B, 64) concentration path
         return self.head(torch.cat([s, c], dim=1))
 
 
-def build_cube_embedding(cube_shape, n_features=32):
-    return CubeCNN(cube_shape, n_features=n_features)
+def build_cube_embedding(cube_shape, n_features=32, moments=False):
+    return CubeCNN(cube_shape, n_features=n_features, moments=moments)

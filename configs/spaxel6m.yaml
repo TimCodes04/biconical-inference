@@ -1,0 +1,54 @@
+# Spaxel-cube 6-param model, MOMENT-CHANNEL variant (v3 candidate vs npe_spaxel6.pt).
+#
+# The successor experiment to configs/rvir6.yaml: same 6 inferred params, same bounds,
+# but the flow conditions on the ENTIRE spaxel cube instead of the aperture-integrated
+# 1-D spectrum, to recover the outflow kinematics (vexp, av) that MODEL_VALIDATION.md §6
+# showed a 1-D spectrum loses off-axis. Trained on raw THOR library cubes — no added
+# noise, no emulator anywhere (train_source: library_cube). The cube grid is NOT set
+# here: it lives in the library attrs / checkpoint (resolved from data, never re-guessed).
+# The library itself is generated on Sherlock (configs/sherlock_spaxel.yaml) and copied
+# home; the 1-D r_vir channel inside it drives the cube-vs-1D A/B (scripts/cube_vs_1d.py).
+library:
+  root: ./runs_spaxel                     # Mac-side placeholder; generation runs on Sherlock
+  out:  ./library/library_spaxel.h5       # the ONE large file copied home (via DTN)
+splits: splits/reserved_test_spaxel.json  # own reserved split — a fresh design must never
+                                          #   reuse the 2ap-row-set default file
+free_params: [logN, theta, av, incl, vexp_kms, disk_logN]
+param_bounds:
+  logN:      [11.0, 16.0]
+  theta:     [15.0, 82.0]
+  av:        [0.5,  2.0]
+  incl:      [0.0,  90.0]
+  vexp_kms:  [50.0, 600.0]
+  disk_logN: [13.0, 16.0]
+fixed:
+  ew: 0.0
+  sigmasrc_kms: 100.0
+  sigmaran_kms: 100.0
+  mass_conservation: true
+  outer_radius_box: 0.4
+  disk_on: true
+  disk_radius_box: 0.04
+  disk_height_box: 0.004
+  disk_tau_dust: 0.0
+  disk_sigma_kms: 50.0
+  source: point
+npe:
+  backend: flow              # hand-built normalizing flow (npe/flow.py) + CubeCNN embedding
+  train_source: library_cube
+  moment_channels: true      # info-audit finding: explicit flux/centroid/dispersion maps
+                             #   carry vexp the conv stack cannot extract (r 0.42 vs 0.28)
+  embedding_features: 32     # the cube carries far more structure than a 1-D spectrum
+  hidden_features: 128
+  num_transforms: 8
+  batch_size: 64             # v2's spectral stage holds (batch*576 spaxels, 32ch, nvel)
+                             #   activations — 256 OOM'd MPS (~6 GB single alloc); 64 fits
+  lr: 0.0002                 # from-scratch recipe (the 3e-5 line was the v2 resume leg)
+                             #   escape velocity — resuming at 1e-4 with fresh Adam state
+                             #   kicked the model out of its annealed minimum (-9.75 -> -8.2)
+                             #   and patience would have killed the leg before recovery
+  stop_after_epochs: 30      # epochs = passes over the ~unique training rows (no re-noising)
+  max_num_epochs: 300        # also the cosine T_max
+  seed: 0
+  ckpt: ./checkpoints/npe_spaxel6m.pt
+device: auto
