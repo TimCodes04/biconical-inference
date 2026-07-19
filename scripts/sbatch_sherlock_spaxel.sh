@@ -33,7 +33,9 @@ mkdir -p logs
 
 export OMP_NUM_THREADS="${SLURM_CPUS_PER_TASK:-16}"
 
-N="${SLURM_ARRAY_TASK_COUNT:-1}"
+# Shard modulus FIXED at 500 (never SLURM_ARRAY_TASK_COUNT: partial resubmits repartition
+# the design and race running shards — the emission run's 435-failure incident).
+N=500
 I="${SLURM_ARRAY_TASK_ID:-0}"
 echo "[sbatch] host=$(hostname) shard=${I}/${N} cores=${OMP_NUM_THREADS} $(date)"
 

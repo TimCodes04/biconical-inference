@@ -23,7 +23,11 @@ mkdir -p logs
 
 export OMP_NUM_THREADS="${SLURM_CPUS_PER_TASK:-16}"
 
-N="${SLURM_ARRAY_TASK_COUNT:-1}"
+# SHARD MODULUS IS FIXED, never derived from the array size: a partial resubmit
+# (sbatch --array=7,39,...) has SLURM_ARRAY_TASK_COUNT = the task COUNT, which silently
+# repartitions the design and races still-running shards for the same sim dirs (the
+# 2026-07-19 435-failure incident). Index i belongs to shard i%500 FOREVER.
+N=500
 I="${SLURM_ARRAY_TASK_ID:-0}"
 echo "[sbatch] host=$(hostname) shard=${I}/${N} cores=${OMP_NUM_THREADS} $(date)"
 
