@@ -33,6 +33,8 @@ fixed:
 npe:
   backend: flow
   train_source: library_cube_em
+  moment_channels: true      # inherit the spaxel6m finding: explicit flux/centroid/
+                             #   dispersion maps carry the kinematics (vexp r 0.28->0.57)
   embedding_features: 32
   hidden_features: 128
   num_transforms: 8
