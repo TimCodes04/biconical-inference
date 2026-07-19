@@ -1,0 +1,33 @@
+{
+  "config": "configs/spaxel6m.yaml",
+  "npe_ckpt": "./checkpoints/npe_spaxel6m.pt",
+  "sbc_generator": "library_cube",
+  "n_sbc": 1000,
+  "coverage": {
+    "logN": {
+      "cov68": 0.787,
+      "cov90": 0.955
+    },
+    "theta": {
+      "cov68": 0.796,
+      "cov90": 0.958
+    },
+    "av": {
+      "cov68": 0.758,
+      "cov90": 0.92
+    },
+    "incl": {
+      "cov68": 0.789,
+      "cov90": 0.96
+    },
+    "vexp_kms": {
+      "cov68": 0.729,
+      "cov90": 0.918
+    },
+    "disk_logN": {
+      "cov68": 0.806,
+      "cov90": 0.963
+    }
+  },
+  "tarp_max_dev": 0.041000000000000036
+}
