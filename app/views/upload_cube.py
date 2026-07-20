@@ -20,6 +20,17 @@ import core
 _SLICES_KMS = (-450, -250, -50, 150, 350)
 
 
+@st.cache_data(show_spinner="Rendering the corner plot…")
+def _corner_bytes(cube, config_path, names, truth=None):
+    """Publication-style corner PNG for THIS fit (cached with the same keys as the
+    inference so reruns are free). Reuses plots.corner_png — matplotlib Agg, so it works
+    on Streamlit Cloud without kaleido."""
+    import plots
+    samp, _ = core.cached_infer(cube, 30.0, 0.0, config_path)
+    return plots.corner_png(samp, list(names),
+                            truth=None if truth is None else np.asarray(truth, dtype=float))
+
+
 def _channel_fig(cube, vel, extent):
     """One row of velocity-slice sky maps (log stretch)."""
     fig = make_subplots(rows=1, cols=len(_SLICES_KMS),
@@ -116,6 +127,15 @@ def render(ctx):
                "whether the posterior is unusually broad or rails against a prior edge. "
                "v_max posteriors are honest but wide except for high-column, low-inclination "
                "winds (see Method → regime map).")
+
+    png = _corner_bytes(cube, ctx.config_path, tuple(ctx.names), truth)
+    tag = (f"example{labels.index(ex_pick) - 1:02d}" if (up is None and ex_pick != "—")
+           else f"upload_{abs(hash(cube.tobytes())) % 10**8:08d}")
+    st.download_button("⬇  Download corner plot (PNG)", data=png,
+                       file_name=f"corner_spaxel6m_{tag}.png", mime="image/png",
+                       key=f"corner_dl_{tag}")
+    with st.expander("Corner plot — full joint posterior"):
+        st.image(png, use_container_width=True)
 
     st.markdown("<span class='bw-eyebrow'>Wind geometry at the posterior median</span>",
                 unsafe_allow_html=True)
