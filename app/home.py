@@ -22,20 +22,21 @@ from biconical_inference.prior import Prior
 # (label, config path). Two-aperture is the STANDARD and leads the list; a model is
 # only offered once its checkpoint is on disk (available_models filters by _ckpt_ready).
 MODEL_CONFIGS = [
-    ("r_vir single-aperture", "configs/rvir6.yaml"),
+    ("Spaxel-cube IFU (moment-channel flow)", "configs/spaxel6m.yaml"),
 ]
 
 _COLS = [1.9, 0.7, 1.15, 1.05, 0.8]      # manifest grid: name · params · apertures · calib · open
 
 
 def _ckpt_ready(config_path):
-    """True iff the config exists and BOTH its NPE and emulator checkpoints are on disk
-    (the workspace loads both, so a missing emulator would crash after 'Open')."""
+    """True iff the config exists, its NPE checkpoint is on disk, and — when the family
+    HAS an emulator (the spaxel-cube family deliberately has none) — that too."""
     try:
         cfg = yaml.safe_load(open(config_path))
-        return (os.path.exists(config_path)
-                and os.path.exists(cfg["npe"]["ckpt"])
-                and os.path.exists(cfg["emulator"]["ckpt"]))
+        if not (os.path.exists(config_path) and os.path.exists(cfg["npe"]["ckpt"])):
+            return False
+        em = cfg.get("emulator")
+        return em is None or os.path.exists(em["ckpt"])
     except Exception:
         return False
 

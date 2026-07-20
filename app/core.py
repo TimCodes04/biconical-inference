@@ -48,9 +48,11 @@ class _FlowPosterior:
     draws, so run_npe's rejection filter passes them straight through, letting a single-aperture,
     fixed-instrument flow model drop into the existing inference/UI path unchanged."""
 
-    def __init__(self, npe):
+    def __init__(self, npe, cube_shape=None, cube_meta=None):
         self.npe = npe
         self.posterior_estimator = self          # run_npe calls posterior.posterior_estimator.sample
+        self.cube_shape = tuple(cube_shape) if cube_shape else None   # spaxel model: (nx, nx, nvel)
+        self.cube_meta = cube_meta or {}
 
     def to(self, dev):
         self.npe.to(dev)
@@ -58,6 +60,8 @@ class _FlowPosterior:
 
     def sample(self, shape, condition=None, x=None, **kw):
         cond = condition if condition is not None else x   # run_npe passes condition=x.unsqueeze(0)
+        if self.cube_shape is not None:                    # spaxel cube: keep the 3-D layout
+            return self.npe.sample(int(shape[0]), cond.reshape(self.cube_shape))
         return self.npe.sample(int(shape[0]), cond.reshape(-1))   # (n, dim), guaranteed in prior box
 
 
@@ -66,14 +70,22 @@ def load_models(config_path=CONFIG):
     cfg = yaml.safe_load(open(config_path))
     prior = Prior.from_config(cfg)
     dev = resolve_device(cfg.get("device", "auto"))
-    emulator = load_emulator(cfg["emulator"]["ckpt"], device="cpu")
+    # The spaxel-cube family has NO emulator (the flow trains on raw library cubes) — the
+    # emulator is optional and cube views never call emulator-dependent helpers.
+    emulator = (load_emulator(cfg["emulator"]["ckpt"], device="cpu")
+                if cfg.get("emulator") else None)
     # Backend: our hand-built normalizing-flow NPE (npe.flow) vs the legacy sbi posterior. A flow
     # model loads via load_npe wrapped in _FlowPosterior; it is single-aperture and NOT instrument-
-    # conditioned (trained at fixed SNR), so conditioned=False, n_ap=1.
+    # conditioned (trained at fixed SNR), so conditioned=False, n_ap=1. A ckpt carrying
+    # cube_shape is the spaxel model — the wrapper keeps the 3-D conditioning layout.
     if cfg["npe"].get("backend") == "flow":
         from biconical_inference.npe.flow import load_npe
-        npe, _ = load_npe(cfg["npe"]["ckpt"], device=dev)
-        return cfg, prior, emulator, _FlowPosterior(npe), dev, False, 1
+        npe, ck = load_npe(cfg["npe"]["ckpt"], device=dev)
+        fp = _FlowPosterior(npe, cube_shape=ck.get("cube_shape"),
+                            cube_meta={k: ck[k] for k in
+                                       ("cube_extent_kpc", "cube_nx", "cube_vel_rebin")
+                                       if k in ck})
+        return cfg, prior, emulator, fp, dev, False, 1
     # Load the posterior onto the resolved device AND reconcile its internal
     # device tag: a checkpoint trained on MPS keeps posterior._device='mps', so
     # map_location alone (or no map_location on a non-Mac host) breaks. .to(dev)
@@ -383,6 +395,12 @@ class AppContext:
     context_names: tuple = ()       # user-set conditioners (e.g. ("incl",)) split out of theta
     theta_cols: object = None       # indices of theta params within the FULL vector
     incl_col: object = None         # index of incl within the FULL vector, or None
+    cube_shape: object = None       # spaxel model: (nx, nx, nvel); None for 1-D families
+    cube_meta: object = None        # {cube_extent_kpc, cube_nx, cube_vel_rebin}
+
+    @property
+    def is_cube(self) -> bool:
+        return self.cube_shape is not None
 
     @property
     def multi_aperture(self) -> bool:
@@ -399,7 +417,16 @@ class AppContext:
 def load_workspace(config_path, active_label=""):
     """Build the per-model bundle threaded to every view (computed once)."""
     cfg, full_prior, emulator, posterior, dev, cond, n_ap = load_models(config_path)
-    vel = np.asarray(emulator.velocity)
+    cube_shape = getattr(posterior, "cube_shape", None)
+    cube_meta = getattr(posterior, "cube_meta", None) or None
+    if emulator is not None:
+        vel = np.asarray(emulator.velocity)
+    else:
+        # Cube model (no emulator): the canonical grid coarsened by the ckpt's vel_rebin.
+        from biconical_inference.thor_sim.constants import BIN_EDGES
+        rb = int((cube_meta or {}).get("cube_vel_rebin", 1))
+        edges = BIN_EDGES[::rb]
+        vel = 0.5 * (edges[1:] + edges[:-1])
     dv = float(np.mean(np.diff(vel)))
     ap_kpc = getattr(emulator, "aperture_kpc", None)
     ap_kpc = np.asarray(ap_kpc) if ap_kpc is not None else cfg.get("library", {}).get("aperture_kpc")
@@ -416,7 +443,42 @@ def load_workspace(config_path, active_label=""):
                       cond=cond, vel=vel, DV=dv, names=list(theta_prior.names), UNITS=UNITS,
                       n_ap=n_ap, aperture_kpc=ap_kpc, full_prior=full_prior,
                       full_names=list(full_prior.names), context_names=context,
-                      theta_cols=theta_cols, incl_col=incl_col)
+                      theta_cols=theta_cols, incl_col=incl_col,
+                      cube_shape=cube_shape, cube_meta=cube_meta)
+
+
+# ---- spaxel-cube examples (library locally, deploy pack on Streamlit Cloud) --
+@st.cache_data(show_spinner="Loading held-out example cubes…")
+def load_cube_examples(config_path):
+    """A small, fixed set of RESERVED held-out cubes for the cube model's examples/browser:
+    {z (M,dim), cubes (M,nx,nx,nvel) f32, incl (M,)}. Local: read from the library via the
+    family's own split file. Deployed: the precomputed deploy pack (make_cube_deploy_pack)."""
+    import h5py
+
+    cfg = yaml.safe_load(open(config_path))
+    lib_path = cfg["library"]["out"]
+    if not os.path.exists(lib_path):
+        pack = _deploy_pack_path(config_path)
+        if not os.path.exists(pack):
+            raise FileNotFoundError(f"Neither {lib_path} nor a deploy pack ({pack}) present. "
+                                    "Run scripts/make_cube_deploy_pack.py locally.")
+        d = np.load(pack)
+        return {"z": d["z"].astype(np.float32), "cubes": d["cubes"].astype(np.float32)}
+    from biconical_inference import splits as _splits
+    lib = load_library(lib_path)
+    z_full = lib["params_z"].astype(np.float32)
+    mask = _splits.test_mask(z_full, run_id=lib.get("run_id"),
+                             aperture_kpc=lib.get("aperture_kpc"),
+                             path=cfg.get("splits", _splits.DEFAULT_PATH))
+    rows_all = np.nonzero(mask)[0]
+    pick = rows_all[np.random.default_rng(42).choice(rows_all.size, size=24, replace=False)]
+    order = np.argsort(pick)
+    with h5py.File(lib_path, "r") as f:
+        srt = f["cubes"][np.sort(pick)].astype(np.float32)
+    cubes = np.empty_like(srt)
+    cubes[order] = srt
+    idx_in_test = np.searchsorted(rows_all, pick)
+    return {"z": z_full[mask][idx_in_test], "cubes": cubes}
 
 
 # ---- external inclination constraint ----------------------------------------

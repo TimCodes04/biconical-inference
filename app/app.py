@@ -55,11 +55,19 @@ if st.session_state["view"] == "home":
 
 # ---- workspace (torch imports happen here, only after a model is chosen) ----
 import core
-from views import upload, playground, how
 
 CONFIG_PATH = st.session_state["model_config"]
 ACTIVE_LABEL = dict((p, lbl) for lbl, p in AVAIL).get(CONFIG_PATH, CONFIG_PATH)
 ctx = core.load_workspace(CONFIG_PATH, ACTIVE_LABEL)
+
+# The spaxel-cube family gets cube-native views (no emulator, no instrument controls);
+# the 1-D families keep the original three tabs.
+if ctx.is_cube:
+    from views import how_cube as how
+    from views import playground_cube as playground
+    from views import upload_cube as upload
+else:
+    from views import how, playground, upload
 
 
 def render_sidebar(ctx):
@@ -75,7 +83,11 @@ def render_sidebar(ctx):
             st.session_state.pop("ex_count", None)
             st.rerun()
         st.divider()
-        if ctx.cond:
+        if ctx.is_cube:
+            st.caption("IFU spaxel-cube model — infers all 6 wind parameters from the full "
+                       "(x, y, velocity) data cube at native THOR resolution (no instrument "
+                       "model in v1: cubes must match the training normalization/grid).")
+        elif ctx.cond:
             st.caption("Instrument-conditioned — valid for LSF FWHM 0–200 km/s, SNR 5–100.")
         else:
             st.warning("Single-instrument baseline NPE (LSF=0, SNR≈30).")
@@ -86,11 +98,20 @@ def render_sidebar(ctx):
             st.caption("Viewing angle is **set by you** before inference (a conditioner like the "
                        "instrument), so the model infers the remaining 5 parameters.")
         with st.expander("Method — 3 steps"):
-            st.markdown(
-                "1. A **1-D CNN emulator** maps wind parameters → MgII spectrum in ms.\n"
-                "2. An **amortized NPE** (normalizing flow) learns p(θ | spectrum, instrument), "
-                "trained on **true THOR spectra** observed through random instruments.\n"
-                "3. Inference returns the **full posterior** for any spectrum instantly.")
+            if ctx.is_cube:
+                st.markdown(
+                    "1. **THOR MCRT** renders each wind as a full MgII **spaxel cube** "
+                    "(24×24 sky × 64 velocity), stored raw — no emulator, no synthetic noise.\n"
+                    "2. An **amortized flow NPE** with a moment-channel CubeCNN learns "
+                    "p(θ | cube) directly from 52k held-out-guarded THOR cubes.\n"
+                    "3. Inference returns the **full 6-parameter posterior** for any cube "
+                    "in seconds, validated at nominal coverage on unseen simulations.")
+            else:
+                st.markdown(
+                    "1. A **1-D CNN emulator** maps wind parameters → MgII spectrum in ms.\n"
+                    "2. An **amortized NPE** (normalizing flow) learns p(θ | spectrum, instrument), "
+                    "trained on **true THOR spectra** observed through random instruments.\n"
+                    "3. Inference returns the **full posterior** for any spectrum instantly.")
         with st.expander("Inferred parameters & priors"):
             st.table([{"param": core.PARAM_META[n][0],
                        "prior": f"[{prior.lo[i]:g}, {prior.hi[i]:g}]",
