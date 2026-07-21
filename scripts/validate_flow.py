@@ -54,7 +54,11 @@ def main():
     # here for a library-trained model is exactly the bug that made calibrated models look
     # overconfident (emulator-self cov68 ~0.58-0.67 vs library-self ~0.68); see MODEL_VALIDATION.md §8.
     train_source = cfg["npe"].get("train_source", "emulator")
-    if train_source == "library_cube":
+    if train_source == "library_cube_em":
+        from biconical_inference.npe.simulator import EmissionCubeSimulator
+        sim = EmissionCubeSimulator(cfg, seed=123)
+        print("[validate] SBC generator = EMISSION CUBES (cont + EW*line, EW ~ prior)", flush=True)
+    elif train_source == "library_cube":
         sim = CubeLibrarySimulator(cfg, seed=123)
         print("[validate] SBC generator = LIBRARY CUBES (raw THOR, no added noise)", flush=True)
     elif train_source == "library":

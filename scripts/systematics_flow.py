@@ -51,7 +51,12 @@ def _lib_names(lib):
 
 def _is_cube(cfg):
     """A spaxel-cube model conditions on raw library cubes (no observation model at all)."""
-    return cfg["npe"].get("train_source") == "library_cube"
+    return str(cfg["npe"].get("train_source", "")).startswith("library_cube")
+
+
+def _is_em(cfg):
+    """The 7-param emission model: EW is a COMPOSITION-TIME parameter (x = cont + EW*line)."""
+    return cfg["npe"].get("train_source") == "library_cube_em"
 
 
 def load_reserved(cfg, return_mask=False):
@@ -82,7 +87,9 @@ def load_reserved(cfg, return_mask=False):
     run_id = lib.get("run_id") if schema >= 2 else None
     ap_kpc = lib.get("aperture_kpc")
 
-    col = [lib_names.index(nm) for nm in prior.names]   # model-order library columns (by name)
+    # Model-order library columns by name. The emission model's 'ew' is NOT a library column
+    # (it is composed at observation time); its truth is drawn and appended by collect().
+    col = [lib_names.index(nm) for nm in prior.names if nm in lib_names]
     vm = valid_mask(flux_all)                            # drop the ~normalization-artifact rows
     vm_row = vm if vm.ndim == 1 else vm.all(axis=1)
     mask = splits.test_mask(z_full, run_id=run_id, aperture_kpc=ap_kpc,
@@ -152,8 +159,23 @@ def collect(cfg, n_sims=800, n_post=1000, seed=0):
         order = np.argsort(rows)                       # h5py wants increasing indices
         with h5py.File(cfg["library"]["out"], "r") as f:
             x_sorted = f["cubes"][np.sort(rows)].astype(np.float32)
+            line_sorted = (f["cubes_line"][np.sort(rows)].astype(np.float32)
+                           if _is_em(cfg) else None)
         x_arr = np.empty_like(x_sorted)
         x_arr[order] = x_sorted                        # back to pick order
+        if _is_em(cfg):
+            # Compose the em test distribution: x = cont + EW*line with EW drawn from its
+            # prior, and append the drawn EW as the truth of the model's 'ew' dimension.
+            line = np.empty_like(line_sorted)
+            line[order] = line_sorted
+            j_ew = list(prior.names).index("ew")
+            ew = rng.uniform(prior.lo[j_ew], prior.hi[j_ew], size=m).astype(np.float32)
+            x_arr = x_arr + ew[:, None, None, None] * line
+            z7 = np.empty((m, len(prior.names)), dtype=np.float32)
+            keep_cols = [j for j, nm in enumerate(prior.names) if nm != "ew"]
+            z7[:, keep_cols] = z_test[pick]
+            z7[:, j_ew] = ew                           # linear param: z == physical
+            return _score_rows(npe, prior, dev, z7, x_arr, n_post)
     else:
         inst = Instrument.canonical(snr_per_pixel=cfg["npe"].get("obs_noise_snr", 30))
         x_arr = np.stack([observe_obs(flux_test[i], inst, rng) for i in pick])  # (m, 256)
@@ -219,7 +241,10 @@ def collect_libself(cfg, n_sims=800, n_post=1000, seed=0):
     dev = resolve_device(cfg.get("device", "auto"))
     prior = Prior.from_config(cfg)
     npe, _ = load_npe(cfg["npe"]["ckpt"], device=dev)
-    if _is_cube(cfg):
+    if _is_em(cfg):
+        from biconical_inference.npe.simulator import EmissionCubeSimulator
+        sim = EmissionCubeSimulator(cfg, seed=seed + 11)   # cont + EW*line, EW ~ prior
+    elif _is_cube(cfg):
         sim = CubeLibrarySimulator(cfg, seed=seed + 11)    # raw train cubes, no added noise
     else:
         sim = LibrarySimulator(cfg, snr=cfg["npe"].get("obs_noise_snr", 30), seed=seed + 11)
@@ -236,7 +261,10 @@ def plot_recovery(d, out):
     """
     names, prior = d["names"], d["prior"]
     truth, median, sig = d["truth"], d["median"], d["sigma"]
-    fig, axes = plt.subplots(2, 3, figsize=(13, 8))
+    nr = int(np.ceil(len(names) / 3))
+    fig, axes = plt.subplots(nr, 3, figsize=(13, 4 * nr), squeeze=False)
+    for a in axes.ravel()[len(names):]:
+        a.axis("off")
     for j, ax in enumerate(axes.ravel()[:len(names)]):
         x, y = truth[:, j], median[:, j]
         lo, hi = float(prior.lo[j]), float(prior.hi[j])
@@ -275,7 +303,10 @@ def plot_pull(d, out):
     pull = compute_pull(d)
     grid = np.linspace(-4, 4, 200)
     normal = np.exp(-0.5 * grid ** 2) / np.sqrt(2 * np.pi)
-    fig, axes = plt.subplots(2, 3, figsize=(13, 8))
+    nr = int(np.ceil(len(names) / 3))
+    fig, axes = plt.subplots(nr, 3, figsize=(13, 4 * nr), squeeze=False)
+    for a in axes.ravel()[len(names):]:
+        a.axis("off")
     print("[sys] pull (median-truth)/sigma  — target mean~0, std~1:")
     for j, ax in enumerate(axes.ravel()[:len(names)]):
         p = pull[:, j]
