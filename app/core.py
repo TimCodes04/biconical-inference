@@ -481,6 +481,83 @@ def load_cube_examples(config_path):
     return {"z": z_full[mask][idx_in_test], "cubes": cubes}
 
 
+# ---- cube-fit goodness of fit (no cube emulator: the 1-D r_vir surrogate) ----
+# Far-blue continuum window on the cube velocity grid: bluer than any model absorption
+# reaches (vexp ≤ 600 km/s + σ_ran 100), so the collapsed spectrum there is pure noise.
+CUBE_CONT_VMAX = -800.0
+
+
+@st.cache_resource(show_spinner=False)
+def load_gate_emulator(config_path):
+    """The 1-D r_vir emulator backing the cube-fit χ²ᵣ gate (cfg['gof']['emulator_ckpt']),
+    or None when the family declares no gate. CPU: one 256-bin forward pass per fit."""
+    cfg = yaml.safe_load(open(config_path))
+    g = cfg.get("gof")
+    return load_emulator(g["emulator_ckpt"], device="cpu") if g else None
+
+
+def collapse_cube(cube, vel_rebin):
+    """Sky-collapse a (nx, nx, nvel) spaxel cube to its aperture-integrated 1-D spectrum
+    (F/F_cont on the cube's velocity grid). Library cubes store per-spaxel flux such that
+    the spaxel sum equals the r_vir-aperture spectrum SUMMED over each vel_rebin bin
+    group; dividing by vel_rebin recovers the mean-rebinned F/F_cont (verified exact,
+    corr=1.0000, on library_spaxel.h5)."""
+    return np.asarray(cube, dtype=np.float32).sum(axis=(0, 1)) / float(vel_rebin)
+
+
+def cube_gof(cube, med_phys, prior, emulator, vel, vel_rebin):
+    """Reduced χ² of a cube fit via the 1-D surrogate: collapse the cube, emulate the
+    r_vir spectrum at the posterior median, rebin to the cube grid, and reduce with
+    σ² = σ_emu² + σ_data². σ_data is the collapsed spectrum's OWN far-blue continuum
+    scatter, so the statistic self-calibrates to the upload's true noise level; the
+    residual line-vs-continuum MC-noise ratio is common-mode and cancels against the
+    reference percentiles (cube_gof_reference), which use the same convention.
+    Returns (chi2_r, resid, x1d, mu_r, sigma_tot) on the cube velocity grid."""
+    x = collapse_cube(cube, vel_rebin)
+    mu, sig = emulate(emulator, prior, np.asarray(med_phys, dtype=float))
+    mu = np.squeeze(np.asarray(mu))
+    sig = np.squeeze(np.asarray(sig))
+    mu_r = mu.reshape(-1, vel_rebin).mean(-1)
+    sig_r = np.sqrt((sig ** 2).reshape(-1, vel_rebin).mean(-1))
+    cont = np.asarray(vel) < CUBE_CONT_VMAX
+    sig_data = max(float(np.std(x[cont])), 1e-4)
+    sig_tot = np.sqrt(sig_r ** 2 + sig_data ** 2)
+    resid = (x - mu_r) / sig_tot
+    return float(np.mean(resid ** 2)), resid, x, mu_r, sig_tot
+
+
+@st.cache_resource(show_spinner="Calibrating the cube χ²ᵣ reference…")
+def cube_gof_reference(config_path):
+    """In-distribution χ²ᵣ reference for cube fits: the same statistic computed on the
+    held-out example cubes at their OWN posterior medians (χ²ᵣ ≈ 1 is not expected —
+    the continuum-scatter σ underestimates line-core MC noise by a stable factor, so
+    the gate compares against these percentiles, not against 1). Loads the precomputed
+    validation/<stem>/cube_gof_reference.json when present (instant on the deployed
+    site); otherwise fits the examples once and caches for the process lifetime."""
+    import json
+
+    stem = os.path.splitext(os.path.basename(config_path))[0]
+    path = os.path.join("validation", stem, "cube_gof_reference.json")
+    if os.path.exists(path):
+        return json.load(open(path))
+    emulator = load_gate_emulator(config_path)
+    _cfg, prior, _em, posterior, _dev, _cond, _nap = load_models(config_path)
+    meta = getattr(posterior, "cube_meta", None) or {}
+    rb = int(meta.get("cube_vel_rebin", 1))
+    from biconical_inference.thor_sim.constants import BIN_EDGES
+    edges = BIN_EDGES[::rb]
+    vel = 0.5 * (edges[1:] + edges[:-1])
+    ex = load_cube_examples(config_path)
+    chi2s = []
+    for cube in ex["cubes"]:
+        samp, _ = cached_infer(np.asarray(cube, dtype=np.float32), 30.0, 0.0, config_path)
+        med = np.median(samp, axis=0)
+        chi2s.append(cube_gof(cube, med, prior, emulator, vel, rb)[0])
+    c = np.asarray(chi2s, dtype=float)
+    return {"n": int(c.size), "p50": float(np.percentile(c, 50)),
+            "p95": float(np.percentile(c, 95)), "max": float(c.max())}
+
+
 # ---- external inclination constraint ----------------------------------------
 def condition_on_incl(samp, names, incl0, incl_sigma, n_out=None, seed=0):
     """Fold an EXTERNAL inclination measurement i ~ N(incl0, incl_sigma) [deg] into the

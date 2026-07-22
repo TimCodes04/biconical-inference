@@ -51,4 +51,9 @@ npe:
   max_num_epochs: 300        # also the cosine T_max
   seed: 0
   ckpt: ./checkpoints/npe_spaxel6m.pt
+gof:                         # cube-fit χ²ᵣ trust gate — no cube emulator exists, so the 1-D
+                             #   r_vir surrogate scores the sky-collapsed cube (library
+                             #   invariant: Σ_spaxels / vel_rebin == the r_vir-aperture
+                             #   spectrum, exact; same physics/fixed block as rvir6)
+  emulator_ckpt: ./checkpoints/emulator_rvir6.pt
 device: auto

@@ -16,8 +16,38 @@ import streamlit as st
 from plotly.subplots import make_subplots
 
 import core
+import plots
 
 _SLICES_KMS = (-450, -250, -50, 150, 350)
+
+
+def _gate_verdict(chi2_r, ref):
+    """Map a cube fit's χ²ᵣ + the in-distribution reference onto the user-facing verdict.
+
+    `ref` = {"n", "p50", "p95", "max"} — the same statistic on the held-out example cubes
+    at their own posterior medians (currently p50≈7.6, p95≈8.0, max≈8.2; a wrong-model
+    cube scores ~20–2700, median ~180). Absolute χ²ᵣ≈1 is NOT expected: the far-blue
+    continuum σ underestimates line-core MC noise by a stable factor that the reference
+    absorbs. Thresholds should therefore be RELATIVE to `ref`, not to 1.
+
+    Returns (label, tone, message): a short bold verdict, a banner tone
+    ('ok' | 'warn' | 'bad'), and one sentence telling the user what the number means
+    for the parameter table above it.
+    """
+    hi = float(ref["p95"])
+    if chi2_r <= 1.5 * hi:
+        return ("consistent", "ok",
+                "The collapsed spectrum is reproduced at the level of the held-out "
+                "simulations — the parameters above are trustworthy.")
+    if chi2_r <= 4.0 * hi:
+        return ("tension", "warn",
+                "The model reproduces the collapsed spectrum imperfectly — the medians "
+                "are likely informative, but treat the credible intervals skeptically "
+                "and inspect the fit overlay below.")
+    return ("not described by the model", "bad",
+            "This cube is outside what the model was trained on (check the F/F_cont "
+            "normalization and velocity grid, or the wind may violate the prior) — "
+            "do not use the parameters above.")
 
 
 @st.cache_data(show_spinner="Rendering the corner plot…")
@@ -123,10 +153,29 @@ def render(ctx):
             r["true (held-out)"] = f"{t:.3g}"
     st.table(rows)
     st.caption("Raw-THOR fixed-instrument model; error bars validated on held-out simulations "
-               "(cov68 ≈ 0.68–0.71). No χ²/OOD gate exists for cubes yet — judge uploads by "
-               "whether the posterior is unusually broad or rails against a prior edge. "
-               "v_max posteriors are honest but wide except for high-column, low-inclination "
-               "winds (see Method → regime map).")
+               "(cov68 ≈ 0.68–0.71). v_max posteriors are honest but wide except for "
+               "high-column, low-inclination winds (see Method → regime map).")
+
+    # ---- χ²ᵣ trust gate: the 1-D r_vir surrogate scores the sky-collapsed cube ----
+    gate_em = core.load_gate_emulator(ctx.config_path)
+    if gate_em is not None:
+        rb = int((ctx.cube_meta or {}).get("cube_vel_rebin", 1))
+        chi2, resid, x1d, mu_r, sig_tot = core.cube_gof(cube, med, ctx.prior, gate_em,
+                                                        ctx.vel, rb)
+        ref = core.cube_gof_reference(ctx.config_path)
+        label, tone, msg = _gate_verdict(chi2, ref)
+        banner = {"ok": st.success, "warn": st.warning}.get(tone, st.error)
+        banner(f"**{label}** — χ²ᵣ = {chi2:.2f} against the held-out reference "
+               f"(median {ref['p50']:.1f}, p95 {ref['p95']:.1f}, n={ref['n']}). {msg}")
+        with st.expander("Collapsed-spectrum fit — data vs model at the posterior median"):
+            st.plotly_chart(plots.fit_residual_plotly(ctx.vel, x1d, mu_r, sig_tot,
+                                                      resid, chi2),
+                            use_container_width=True)
+            st.caption("Summing the cube over the sky reproduces the r_vir-aperture 1-D "
+                       "spectrum exactly (a library invariant), so the 1-D r_vir emulator "
+                       "at the cube fit's posterior median is a true forward model of this "
+                       "curve. χ²ᵣ reduces over σ² = σ_emu² + σ_cont², with σ_cont the "
+                       "collapsed spectrum's own far-blue continuum scatter.")
 
     png = _corner_bytes(cube, ctx.config_path, tuple(ctx.names), truth)
     tag = (f"example{labels.index(ex_pick) - 1:02d}" if (up is None and ex_pick != "—")
