@@ -215,10 +215,12 @@ def _export_row(ctx, samp, names, rows, med, cands, chi2, ref, trustworthy, snr_
 
 
 @st.cache_data(show_spinner=False)
-def _corner_png_bytes(samp, names, truth):
-    """Cached B&W-plus-blue corner PNG (rebuilt only when the posterior changes)."""
+def _corner_png_bytes(samp, names, truth, plo=None, phi=None):
+    """Cached B&W-plus-blue corner PNG (rebuilt only when the posterior changes).
+    plo/phi (prior bounds, tuples) floor the axes so railed params stay readable."""
     return plots.corner_png(samp, list(names),
-                            truth=None if truth is None else list(truth))
+                            truth=None if truth is None else list(truth),
+                            prior_lo=plo, prior_hi=phi)
 
 
 @st.cache_data(show_spinner=False)
@@ -611,16 +613,21 @@ def render(ctx: core.AppContext):
 
     # ---- full joint posterior (interactive corner) ------------------------
     with st.expander("Full joint posterior — 1-D marginals + interactive corner"):
+        _plo = tuple(float(x) for x in prior.lo)
+        _phi = tuple(float(x) for x in prior.hi)
         st.download_button(
             "Corner + histograms · PNG (black & white, blue posterior)",
             _corner_png_bytes(samp, tuple(names),
-                              None if truth is None else tuple(float(t) for t in truth)),
+                              None if truth is None else tuple(float(t) for t in truth),
+                              _plo, _phi),
             file_name=f"biconical_{ctx.active_label.lower().replace(' ', '_')}_corner.png",
             mime="image/png", use_container_width=True,
             help="Static, print-ready corner: diagonal 1-D histograms + lower-triangle 2-D "
                  "density, black-and-white frame with the posterior itself in blue.")
-        st.plotly_chart(plots.marginals_plotly(samp, names, med, truth=truth),
+        st.plotly_chart(plots.marginals_plotly(samp, names, med, truth=truth,
+                                               prior_lo=_plo, prior_hi=_phi),
                         width="stretch", config=T.PLOTLY_CONFIG)
         if st.toggle("Render the full interactive corner (heavier figure)", key="corner_on"):
-            st.plotly_chart(plots.corner_plotly(samp, names, truth=truth),
+            st.plotly_chart(plots.corner_plotly(samp, names, truth=truth,
+                                                prior_lo=_plo, prior_hi=_phi),
                             width="stretch", config=T.PLOTLY_CONFIG)

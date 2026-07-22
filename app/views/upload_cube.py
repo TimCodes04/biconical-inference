@@ -75,14 +75,16 @@ def _gate_verdict(chi2_r, ref, cont_med, w68):
 
 
 @st.cache_data(show_spinner="Rendering the corner plot…")
-def _corner_bytes(cube, config_path, names, truth=None):
+def _corner_bytes(cube, config_path, names, truth=None, plo=None, phi=None):
     """Publication-style corner PNG for THIS fit (cached with the same keys as the
     inference so reruns are free). Reuses plots.corner_png — matplotlib Agg, so it works
-    on Streamlit Cloud without kaleido."""
+    on Streamlit Cloud without kaleido. plo/phi (prior bounds, tuples for cache hashing)
+    floor the axis ranges so bound-railed params show as spikes at a labeled boundary."""
     import plots
     samp, _ = core.cached_infer(cube, 30.0, 0.0, config_path)
     return plots.corner_png(samp, list(names),
-                            truth=None if truth is None else np.asarray(truth, dtype=float))
+                            truth=None if truth is None else np.asarray(truth, dtype=float),
+                            prior_lo=plo, prior_hi=phi)
 
 
 def _channel_fig(cube, vel, extent):
@@ -226,7 +228,9 @@ def render(ctx):
                        "curve. χ²ᵣ reduces over σ² = σ_emu² + σ_cont², with σ_cont the "
                        "collapsed spectrum's own far-blue continuum scatter.")
 
-    png = _corner_bytes(cube, ctx.config_path, tuple(ctx.names), truth)
+    png = _corner_bytes(cube, ctx.config_path, tuple(ctx.names), truth,
+                        tuple(float(x) for x in ctx.prior.lo),
+                        tuple(float(x) for x in ctx.prior.hi))
     tag = (f"example{labels.index(ex_pick) - 1:02d}" if (up is None and ex_pick != "—")
            else f"upload_{abs(hash(cube.tobytes())) % 10**8:08d}")
     st.download_button("⬇  Download corner plot (PNG)", data=png,

@@ -319,15 +319,31 @@ def param_forest_plotly(samp, prior, names, truth=None, *, height=None):
     return fig
 
 
-def _param_ranges(samp, pad=0.06):
-    """Per-parameter display range from the posterior (padded), for corner alignment."""
+def _param_ranges(samp, pad=0.06, prior_lo=None, prior_hi=None, min_frac=0.05):
+    """Per-parameter display range from the posterior (padded), for corner alignment.
+
+    With prior bounds given, each axis is floored at min_frac of the PRIOR range and
+    clamped inside the prior box. A parameter railed at a bound then renders as a sharp
+    spike AT a readably-labeled boundary — instead of a microscopic zoom onto sampler
+    noise, which draws blocky pseudo-contours and pushes matplotlib into '+8.199e1'
+    offset notation (a δ-spike at θ=82 masquerading as a broad histogram)."""
     lo = np.percentile(samp, 0.5, axis=0)
     hi = np.percentile(samp, 99.5, axis=0)
     span = np.where((hi - lo) == 0, 1.0, hi - lo)
-    return lo - pad * span, hi + pad * span
+    lo, hi = lo - pad * span, hi + pad * span
+    if prior_lo is not None and prior_hi is not None:
+        plo = np.asarray(prior_lo, dtype=float)
+        phi = np.asarray(prior_hi, dtype=float)
+        need = np.maximum(min_frac * (phi - plo) - (hi - lo), 0.0)
+        lo, hi = lo - 0.5 * need, hi + 0.5 * need
+        # slide back inside the prior box (floor < prior span, so one side at most)
+        shift = np.maximum(plo - lo, 0.0) - np.maximum(hi - phi, 0.0)
+        lo, hi = np.maximum(lo + shift, plo), np.minimum(hi + shift, phi)
+    return lo, hi
 
 
-def corner_plotly(samp, names, truth=None, *, height=None, max_pts=4000):
+def corner_plotly(samp, names, truth=None, *, height=None, max_pts=4000,
+                  prior_lo=None, prior_hi=None):
     """Full interactive triangular corner: 2-D posterior density (lower) + 1-D marginals
     (diagonal), with the known truth crosshaired. Vector + hoverable — no rasterization."""
     from plotly.subplots import make_subplots
@@ -337,7 +353,7 @@ def corner_plotly(samp, names, truth=None, *, height=None, max_pts=4000):
         idx = np.linspace(0, len(samp) - 1, max_pts).astype(int)
         samp = samp[idx]
     n = len(names)
-    rlo, rhi = _param_ranges(samp)
+    rlo, rhi = _param_ranges(samp, prior_lo=prior_lo, prior_hi=prior_hi)
     syms = [_sym(nm) for nm in names]
     fig = make_subplots(rows=n, cols=n, horizontal_spacing=0.012, vertical_spacing=0.012)
     for i in range(n):          # row  (y = param i)
@@ -389,11 +405,13 @@ def corner_plotly(samp, names, truth=None, *, height=None, max_pts=4000):
     return fig
 
 
-def marginals_plotly(samp, names, med, truth=None, *, height=None):
+def marginals_plotly(samp, names, med, truth=None, *, height=None,
+                     prior_lo=None, prior_hi=None):
     """1-D posterior marginals as small multiples (median dashed, truth ochre)."""
     from plotly.subplots import make_subplots
     import plotly.graph_objects as go
     samp = np.asarray(samp)
+    rlo, rhi = _param_ranges(samp, prior_lo=prior_lo, prior_hi=prior_hi)
     n = len(names); ncols = 3; nrows = int(np.ceil(n / ncols))
     fig = make_subplots(rows=nrows, cols=ncols, subplot_titles=[_sym(nm) for nm in names],
                         horizontal_spacing=0.07, vertical_spacing=0.16)
@@ -409,7 +427,8 @@ def marginals_plotly(samp, names, med, truth=None, *, height=None):
         if truth is not None:
             fig.add_vline(x=float(truth[k]), line=dict(color=T.TRUTH, width=1.3), row=r, col=c)
         fig.update_yaxes(showticklabels=False, showgrid=False, row=r, col=c)
-        fig.update_xaxes(nticks=4, tickfont=dict(size=9, color=T.INK_FAINT), row=r, col=c)
+        fig.update_xaxes(nticks=4, tickfont=dict(size=9, color=T.INK_FAINT),
+                         range=[float(rlo[k]), float(rhi[k])], row=r, col=c)
     T.dark_plotly(fig, height=height or (150 * nrows + 30), legend=False)
     for ann in fig.layout.annotations:
         ann.font = dict(family=T.FONT_MONO, size=12, color=T.INK)
@@ -450,7 +469,8 @@ _PNG_BLUE = "#2b6ca3"       # posterior fill / colormap end (prints legibly on w
 _PNG_BLUE_HI = "#123f63"    # contour-line accent
 
 
-def corner_png(samp, names, truth=None, *, dpi=200, max_pts=20000):
+def corner_png(samp, names, truth=None, *, dpi=200, max_pts=20000,
+               prior_lo=None, prior_hi=None):
     """Full corner (2-D density + diagonal 1-D histograms) as a black-and-white PNG
     with the blue posterior shape. Returns PNG bytes for st.download_button.
 
@@ -468,7 +488,7 @@ def corner_png(samp, names, truth=None, *, dpi=200, max_pts=20000):
         idx = np.linspace(0, len(samp) - 1, max_pts).astype(int)
         samp = samp[idx]
     n = samp.shape[1]
-    lo, hi = _param_ranges(samp)
+    lo, hi = _param_ranges(samp, prior_lo=prior_lo, prior_hi=prior_hi)
     syms = [_sym(nm) for nm in names]
     labels = [f"{s}  [{PARAM_META.get(nm, (nm, ''))[1]}]"
               if PARAM_META.get(nm, (nm, ""))[1] else s
@@ -508,7 +528,12 @@ def corner_png(samp, names, truth=None, *, dpi=200, max_pts=20000):
                 xc = 0.5 * (xe[:-1] + xe[1:])
                 yc = 0.5 * (ye[:-1] + ye[1:])
                 ax.contourf(xc, yc, H, levels=12, cmap=cmap)
-                ax.contour(xc, yc, H, levels=5, colors=_PNG_BLUE_HI, linewidths=0.4)
+                # line contours only above 8% of the peak: smoothed 1-sample noise in
+                # near-empty panels otherwise draws blocky stray rectangles
+                hmax = float(H.max())
+                if hmax > 0:
+                    ax.contour(xc, yc, H, levels=np.linspace(0.08 * hmax, hmax, 5),
+                               colors=_PNG_BLUE_HI, linewidths=0.4)
                 if truth is not None:
                     ax.axvline(float(truth[j]), color="black", lw=0.6, alpha=0.55)
                     ax.axhline(float(truth[i]), color="black", lw=0.6, alpha=0.55)
