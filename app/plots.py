@@ -322,15 +322,16 @@ def param_forest_plotly(samp, prior, names, truth=None, *, height=None):
 def _param_ranges(samp, pad=0.06, prior_lo=None, prior_hi=None, min_frac=0.05):
     """Per-parameter display range from the posterior (padded), for corner alignment.
 
-    The range covers the FULL sample extent (never percentile-truncated: tails must not
-    be cut mid-bar). With prior bounds given, each axis is additionally floored at
-    min_frac of the PRIOR range — a railed parameter renders as a sharp spike at a
-    readably-labeled bound instead of a microscopic zoom onto sampler noise — and may
-    overshoot a bound by the pad margin only, so mass pinned AT the bound is drawn as a
-    complete peak (not a half-dome clipped by the frame). Draw the bound itself with
-    _bound_lines so the overshoot strip reads as 'outside the prior', not as support."""
-    dlo = samp.min(axis=0)
-    dhi = samp.max(axis=0)
+    The core range is the central 99% of the draws (a few stray flow leaks must NOT
+    stretch the axes until the posterior is a speck). With prior bounds given, each axis
+    is additionally floored at min_frac of the PRIOR range — a railed parameter renders
+    as a sharp spike at a readably-labeled bound instead of a microscopic zoom onto
+    sampler noise — and may overshoot a bound by the pad margin only, so mass pinned AT
+    the bound is drawn as a complete peak (not a half-dome clipped by the frame). Draw
+    the bound itself with _bound_marks so the overshoot strip reads as 'outside the
+    prior', not as support."""
+    dlo = np.percentile(samp, 0.5, axis=0)
+    dhi = np.percentile(samp, 99.5, axis=0)
     if prior_lo is None or prior_hi is None:
         span = np.where((dhi - dlo) == 0, 1.0, dhi - dlo)
         return dlo - pad * span, dhi + pad * span
@@ -501,17 +502,20 @@ _PNG_BLUE_HI = "#123f63"    # contour-line accent
 
 def corner_png(samp, names, truth=None, *, dpi=200, max_pts=20000,
                prior_lo=None, prior_hi=None):
-    """Full corner (2-D density + diagonal 1-D histograms) as a black-and-white PNG
-    with the blue posterior shape. Returns PNG bytes for st.download_button.
+    """Posterior corner as a PNG, rendered by the STANDARD `corner` package (the field
+    convention: Foreman-Mackey, corner.py) in the house blue on white. Returns PNG
+    bytes for st.download_button.
 
-    Frame, ticks, axis labels and any known-truth crosshair are black on white; only
-    the posterior — the diagonal histograms and the lower-triangle density — is blue.
-    Axes and ranges mirror corner_plotly so the download matches the interactive view."""
+    The only local policy is the per-parameter `range` passed in (corner.py requires an
+    explicit range for zero-variance columns anyway): the central 99% of the draws,
+    floored at 5% of the prior span, with a pad-sized margin past a railed bound —
+    see _param_ranges. Everything else (histogram style, 2-D density + sigma-level
+    contours, truth crosshairs, label layout) is corner.py's default behavior. Dashed
+    grey lines mark prior bounds that fall inside a panel."""
     import io
 
+    import corner as corner_pkg
     from matplotlib.backends.backend_agg import FigureCanvasAgg
-    from matplotlib.colors import LinearSegmentedColormap
-    from matplotlib.figure import Figure
 
     samp = np.asarray(samp, dtype=float)
     if len(samp) > max_pts:                                  # cap density/hist cost
@@ -523,70 +527,26 @@ def corner_png(samp, names, truth=None, *, dpi=200, max_pts=20000,
     labels = [f"{s}  [{PARAM_META.get(nm, (nm, ''))[1]}]"
               if PARAM_META.get(nm, (nm, ""))[1] else s
               for nm, s in zip(names, syms)]
-    cmap = LinearSegmentedColormap.from_list("bw_blue", ["#ffffff", _PNG_BLUE])
-    try:                                                     # smooth the 2-D density
-        from scipy.ndimage import gaussian_filter
-    except Exception:
-        gaussian_filter = None
 
-    fig = Figure(figsize=(1.75 * n + 0.7, 1.75 * n + 0.7), dpi=dpi, facecolor="white")
-    axes = fig.subplots(n, n, squeeze=False)
-    fig.subplots_adjust(left=0.11, right=0.985, top=0.985, bottom=0.11,
-                        wspace=0.07, hspace=0.07)
-
-    for i in range(n):
-        for j in range(n):
-            ax = axes[i][j]
-            ax.set_facecolor("white")
-            if j > i:                                        # upper triangle blank
-                ax.axis("off")
-                continue
-            if i == j:                                       # diagonal: 1-D histogram
-                ax.hist(samp[:, i], bins=34, range=(lo[i], hi[i]),
-                        color=_PNG_BLUE, alpha=0.55, edgecolor=_PNG_BLUE, linewidth=0.6)
-                if truth is not None:
-                    ax.axvline(float(truth[i]), color="black", lw=1.1)
-                _bound_marks(ax, prior_lo, prior_hi, i, lo, hi, axis="x")
-                ax.set_xlim(lo[i], hi[i])
-                ax.set_yticks([])                            # counts axis carries no info
-            else:                                            # lower triangle: 2-D density
-                H, xe, ye = np.histogram2d(
-                    samp[:, j], samp[:, i], bins=44,
-                    range=[[lo[j], hi[j]], [lo[i], hi[i]]])
-                H = H.T
-                if gaussian_filter is not None:
-                    H = gaussian_filter(H, 1.1, mode="constant")   # decay to 0 at edges
-                xc = 0.5 * (xe[:-1] + xe[1:])
-                yc = 0.5 * (ye[:-1] + ye[1:])
-                ax.contourf(xc, yc, H, levels=12, cmap=cmap)
-                # line contours only above 8% of the peak: smoothed 1-sample noise in
-                # near-empty panels otherwise draws blocky stray rectangles
-                hmax = float(H.max())
-                if hmax > 0:
-                    ax.contour(xc, yc, H, levels=np.linspace(0.08 * hmax, hmax, 5),
-                               colors=_PNG_BLUE_HI, linewidths=0.4)
-                if truth is not None:
-                    ax.axvline(float(truth[j]), color="black", lw=0.6, alpha=0.55)
-                    ax.axhline(float(truth[i]), color="black", lw=0.6, alpha=0.55)
-                    ax.plot(float(truth[j]), float(truth[i]), marker="*", ms=9,
-                            color="black", mec="white", mew=0.6)
-                _bound_marks(ax, prior_lo, prior_hi, j, lo, hi, axis="x")
-                _bound_marks(ax, prior_lo, prior_hi, i, lo, hi, axis="y")
-                ax.set_xlim(lo[j], hi[j])
-                ax.set_ylim(lo[i], hi[i])
-            for sp in ax.spines.values():                    # black frame
-                sp.set_color("black")
-                sp.set_linewidth(0.8)
-            ax.tick_params(colors="black", labelsize=7, direction="out")
-            ax.locator_params(nbins=4)
-            if i == n - 1:                                   # x labels: bottom row only
-                ax.set_xlabel(labels[j], color="black", fontsize=9)
-            else:
-                ax.set_xticklabels([])
-            if j == 0 and i != 0:                            # y labels: left column, not (0,0)
-                ax.set_ylabel(labels[i], color="black", fontsize=9)
-            elif i != j:
-                ax.set_yticklabels([])
+    fig = corner_pkg.corner(
+        samp, labels=labels,
+        truths=None if truth is None else [float(t) for t in truth],
+        range=[(float(a), float(b)) for a, b in zip(lo, hi)],
+        bins=34, smooth=1.0,
+        color=_PNG_BLUE, truth_color="black",
+        plot_datapoints=False, plot_density=True, fill_contours=True,
+        hist_kwargs=dict(color=_PNG_BLUE, alpha=0.85, linewidth=1.0),
+        label_kwargs=dict(fontsize=10), max_n_ticks=4,
+    )
+    fig.set_facecolor("white")
+    fig.set_dpi(dpi)
+    if prior_lo is not None and prior_hi is not None:        # mark in-panel prior bounds
+        axes = np.array(fig.axes).reshape(n, n)
+        for i in range(n):
+            for j in range(i + 1):
+                _bound_marks(axes[i][j], prior_lo, prior_hi, j, lo, hi, axis="x")
+                if i != j:
+                    _bound_marks(axes[i][j], prior_lo, prior_hi, i, lo, hi, axis="y")
 
     buf = io.BytesIO()
     FigureCanvasAgg(fig).print_png(buf)
