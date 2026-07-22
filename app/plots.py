@@ -322,24 +322,50 @@ def param_forest_plotly(samp, prior, names, truth=None, *, height=None):
 def _param_ranges(samp, pad=0.06, prior_lo=None, prior_hi=None, min_frac=0.05):
     """Per-parameter display range from the posterior (padded), for corner alignment.
 
-    With prior bounds given, each axis is floored at min_frac of the PRIOR range and
-    clamped inside the prior box. A parameter railed at a bound then renders as a sharp
-    spike AT a readably-labeled boundary — instead of a microscopic zoom onto sampler
-    noise, which draws blocky pseudo-contours and pushes matplotlib into '+8.199e1'
-    offset notation (a δ-spike at θ=82 masquerading as a broad histogram)."""
-    lo = np.percentile(samp, 0.5, axis=0)
-    hi = np.percentile(samp, 99.5, axis=0)
-    span = np.where((hi - lo) == 0, 1.0, hi - lo)
-    lo, hi = lo - pad * span, hi + pad * span
-    if prior_lo is not None and prior_hi is not None:
-        plo = np.asarray(prior_lo, dtype=float)
-        phi = np.asarray(prior_hi, dtype=float)
-        need = np.maximum(min_frac * (phi - plo) - (hi - lo), 0.0)
-        lo, hi = lo - 0.5 * need, hi + 0.5 * need
-        # slide back inside the prior box (floor < prior span, so one side at most)
-        shift = np.maximum(plo - lo, 0.0) - np.maximum(hi - phi, 0.0)
-        lo, hi = np.maximum(lo + shift, plo), np.minimum(hi + shift, phi)
-    return lo, hi
+    The range covers the FULL sample extent (never percentile-truncated: tails must not
+    be cut mid-bar). With prior bounds given, each axis is additionally floored at
+    min_frac of the PRIOR range — a railed parameter renders as a sharp spike at a
+    readably-labeled bound instead of a microscopic zoom onto sampler noise — and may
+    overshoot a bound by the pad margin only, so mass pinned AT the bound is drawn as a
+    complete peak (not a half-dome clipped by the frame). Draw the bound itself with
+    _bound_lines so the overshoot strip reads as 'outside the prior', not as support."""
+    dlo = samp.min(axis=0)
+    dhi = samp.max(axis=0)
+    if prior_lo is None or prior_hi is None:
+        span = np.where((dhi - dlo) == 0, 1.0, dhi - dlo)
+        return dlo - pad * span, dhi + pad * span
+    plo = np.asarray(prior_lo, dtype=float)
+    phi = np.asarray(prior_hi, dtype=float)
+    w = np.maximum(dhi - dlo, min_frac * (phi - plo))
+    grow = np.maximum(w - (dhi - dlo), 0.0)
+    lo = dlo - 0.5 * grow - pad * w
+    hi = dhi + 0.5 * grow + pad * w
+    # slide back so the window exceeds a prior bound by at most the pad margin
+    over = pad * w
+    shift = np.maximum((plo - over) - lo, 0.0) - np.maximum(hi - (phi + over), 0.0)
+    return lo + shift, hi + shift
+
+
+def _bound_marks(ax, prior_lo, prior_hi, k, lo, hi, axis="x"):
+    """Dashed matplotlib marker at a prior bound that falls inside the plotted range —
+    the strip beyond it is 'outside the prior', not posterior support."""
+    if prior_lo is None or prior_hi is None:
+        return
+    line = ax.axvline if axis == "x" else ax.axhline
+    for b in (float(np.asarray(prior_lo, float)[k]), float(np.asarray(prior_hi, float)[k])):
+        if lo[k] < b < hi[k]:
+            line(b, color="0.45", lw=0.7, ls=(0, (3, 2)), zorder=1.5)
+
+
+def _plotly_bounds(fig, prior_lo, prior_hi, k, lo, hi, *, row, col, axis="x"):
+    """Plotly counterpart of _bound_marks (dashed grey line at an in-range prior bound)."""
+    if prior_lo is None or prior_hi is None:
+        return
+    add = fig.add_vline if axis == "x" else fig.add_hline
+    for b in (float(np.asarray(prior_lo, float)[k]), float(np.asarray(prior_hi, float)[k])):
+        if lo[k] < b < hi[k]:
+            add(b, line=dict(color="rgba(150,158,170,0.7)", width=1, dash="dot"),
+                row=row, col=col)
 
 
 def corner_plotly(samp, names, truth=None, *, height=None, max_pts=4000,
@@ -372,6 +398,7 @@ def corner_plotly(samp, names, truth=None, *, height=None, max_pts=4000,
                 if truth is not None:
                     fig.add_vline(x=float(truth[i]), line=dict(color=T.TRUTH, width=1.3),
                                   row=r, col=c)
+                _plotly_bounds(fig, prior_lo, prior_hi, i, rlo, rhi, row=r, col=c)
                 fig.update_xaxes(range=[rlo[i], rhi[i]], row=r, col=c)
                 fig.update_yaxes(showticklabels=False, showgrid=False, row=r, col=c)
             else:               # lower triangle: 2-D density
@@ -386,6 +413,8 @@ def corner_plotly(samp, names, truth=None, *, height=None, max_pts=4000,
                                              marker=dict(color=T.TRUTH, size=8, symbol="star",
                                                          line=dict(color=T.VOID, width=0.6)),
                                              hoverinfo="skip", showlegend=False), row=r, col=c)
+                _plotly_bounds(fig, prior_lo, prior_hi, j, rlo, rhi, row=r, col=c)
+                _plotly_bounds(fig, prior_lo, prior_hi, i, rlo, rhi, row=r, col=c, axis="y")
                 fig.update_xaxes(range=[rlo[j], rhi[j]], row=r, col=c)
                 fig.update_yaxes(range=[rlo[i], rhi[i]], row=r, col=c)
             # edge labels only
@@ -426,6 +455,7 @@ def marginals_plotly(samp, names, med, truth=None, *, height=None,
                       row=r, col=c)
         if truth is not None:
             fig.add_vline(x=float(truth[k]), line=dict(color=T.TRUTH, width=1.3), row=r, col=c)
+        _plotly_bounds(fig, prior_lo, prior_hi, k, rlo, rhi, row=r, col=c)
         fig.update_yaxes(showticklabels=False, showgrid=False, row=r, col=c)
         fig.update_xaxes(nticks=4, tickfont=dict(size=9, color=T.INK_FAINT),
                          range=[float(rlo[k]), float(rhi[k])], row=r, col=c)
@@ -516,6 +546,7 @@ def corner_png(samp, names, truth=None, *, dpi=200, max_pts=20000,
                         color=_PNG_BLUE, alpha=0.55, edgecolor=_PNG_BLUE, linewidth=0.6)
                 if truth is not None:
                     ax.axvline(float(truth[i]), color="black", lw=1.1)
+                _bound_marks(ax, prior_lo, prior_hi, i, lo, hi, axis="x")
                 ax.set_xlim(lo[i], hi[i])
                 ax.set_yticks([])                            # counts axis carries no info
             else:                                            # lower triangle: 2-D density
@@ -539,6 +570,8 @@ def corner_png(samp, names, truth=None, *, dpi=200, max_pts=20000,
                     ax.axhline(float(truth[i]), color="black", lw=0.6, alpha=0.55)
                     ax.plot(float(truth[j]), float(truth[i]), marker="*", ms=9,
                             color="black", mec="white", mew=0.6)
+                _bound_marks(ax, prior_lo, prior_hi, j, lo, hi, axis="x")
+                _bound_marks(ax, prior_lo, prior_hi, i, lo, hi, axis="y")
                 ax.set_xlim(lo[j], hi[j])
                 ax.set_ylim(lo[i], hi[i])
             for sp in ax.spines.values():                    # black frame
