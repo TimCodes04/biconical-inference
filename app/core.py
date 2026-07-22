@@ -523,7 +523,11 @@ def cube_gof(cube, med_phys, prior, emulator, vel, vel_rebin):
     sig_data = max(float(np.std(x[cont])), 1e-4)
     sig_tot = np.sqrt(sig_r ** 2 + sig_data ** 2)
     resid = (x - mu_r) / sig_tot
-    return float(np.mean(resid ** 2)), resid, x, mu_r, sig_tot
+    # cont_med guards the verdict against the self-calibration loophole: a mis-normalized
+    # cube has a HUGE continuum scatter, which inflates sig_data and deflates chi2 (an
+    # AGORA cube at continuum 17.8 scored chi2=10). The absolute level must be ~1.
+    cont_med = float(np.median(x[cont]))
+    return float(np.mean(resid ** 2)), resid, x, mu_r, sig_tot, cont_med
 
 
 @st.cache_resource(show_spinner="Calibrating the cube χ²ᵣ reference…")

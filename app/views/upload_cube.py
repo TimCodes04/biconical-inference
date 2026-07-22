@@ -21,8 +21,8 @@ import plots
 _SLICES_KMS = (-450, -250, -50, 150, 350)
 
 
-def _gate_verdict(chi2_r, ref):
-    """Map a cube fit's χ²ᵣ + the in-distribution reference onto the user-facing verdict.
+def _gate_verdict(chi2_r, ref, cont_med, w68):
+    """Map a cube fit's diagnostics onto the user-facing verdict.
 
     `ref` = {"n", "p50", "p95", "max"} — the same statistic on the held-out example cubes
     at their own posterior medians (currently p50≈7.6, p95≈8.0, max≈8.2; a wrong-model
@@ -30,10 +30,34 @@ def _gate_verdict(chi2_r, ref):
     continuum σ underestimates line-core MC noise by a stable factor that the reference
     absorbs. Thresholds should therefore be RELATIVE to `ref`, not to 1.
 
+    Two hard checks run BEFORE the χ² bands, because χ² alone can false-pass:
+      * cont_med — the collapsed continuum level. σ self-calibrates from the data's own
+        scatter, so a mis-normalized cube (huge scatter) can deflate a catastrophic
+        mismatch into a modest χ²ᵣ (a per-spaxel-normalized AGORA cube sat at continuum
+        17.8 yet scored 10.4). Training cubes give 1.002 ± 0.004.
+      * w68 — per-param posterior 68% width / prior range. On far-OOD input the flow
+        collapses to a point (all draws identical → the corner shows only dots); such a
+        'posterior' is meaningless whatever χ² says. In-distribution medians are ≥ a few
+        percent of the prior range.
+
     Returns (label, tone, message): a short bold verdict, a banner tone
     ('ok' | 'warn' | 'bad'), and one sentence telling the user what the number means
     for the parameter table above it.
     """
+    if abs(cont_med - 1.0) > 0.10:
+        return ("wrong normalization", "bad",
+                f"The sky-collapsed continuum sits at {cont_med:.2f}, but the model expects "
+                "F/F_cont (≈1.00): normalize so the SUM over spaxels equals the aperture "
+                "spectrum — not each spaxel by its own continuum. The posterior and χ²ᵣ "
+                "above are meaningless for this cube.")
+    # Collapse is literally zero width (all draws identical); the sharpest REAL held-out
+    # fit has median w68 = 0.008, so 0.002 separates with 4x margin on both sides.
+    if float(np.median(w68)) < 0.002:
+        return ("posterior collapsed — input far outside the training set", "bad",
+                "The flow returned a near-point posterior (the corner plot shows only dots), "
+                "which real fits never do — this cube's structure is unlike any training "
+                "cube (check the velocity grid, ±60 kpc field of view, and normalization). "
+                "Do not use the parameters above.")
     hi = float(ref["p95"])
     if chi2_r <= 1.5 * hi:
         return ("consistent", "ok",
@@ -128,6 +152,29 @@ def render(ctx):
                 st.error(f"cube shape {cube.shape} ≠ model's {tuple(ctx.cube_shape)} "
                          f"(±{extent:.0f} kpc, {nvel} velocity bins). Re-bin and retry.")
                 cube = None
+            else:
+                # Grid provenance: shape alone can't prove the axes match. If the npz
+                # carries its own edges (e.g. AGORA cube-maker output), refuse a cube
+                # whose velocity grid or field of view differs from the training cube —
+                # a fit on misaligned axes is meaningless however plausible it looks.
+                rb0 = int((ctx.cube_meta or {}).get("cube_vel_rebin", 1))
+                from biconical_inference.thor_sim.constants import BIN_EDGES
+                want_v = BIN_EDGES[::rb0]
+                if "vel_edges_kms" in d.files:
+                    got_v = np.asarray(d["vel_edges_kms"], dtype=float)
+                    if got_v.size != want_v.size or not np.allclose(got_v, want_v, atol=1.0):
+                        st.error(f"velocity grid mismatch: this cube spans "
+                                 f"[{got_v[0]:.0f}, {got_v[-1]:.0f}] km/s but the model was "
+                                 f"trained on [{want_v[0]:.0f}, {want_v[-1]:.0f}] km/s "
+                                 f"({len(want_v) - 1} bins). Re-extract on the training grid.")
+                        cube = None
+                if cube is not None and "x_edges_kpc" in d.files:
+                    got_x = np.asarray(d["x_edges_kpc"], dtype=float)
+                    if abs(float(np.max(np.abs(got_x))) - extent) > 1.0:
+                        st.error(f"field-of-view mismatch: this cube spans "
+                                 f"±{np.max(np.abs(got_x)):.0f} kpc but the model was "
+                                 f"trained on ±{extent:.0f} kpc. Re-grid and retry.")
+                        cube = None
         except Exception as e:
             st.error(f"could not read the npz: {e}")
     elif ex_pick != "—":
@@ -160,10 +207,12 @@ def render(ctx):
     gate_em = core.load_gate_emulator(ctx.config_path)
     if gate_em is not None:
         rb = int((ctx.cube_meta or {}).get("cube_vel_rebin", 1))
-        chi2, resid, x1d, mu_r, sig_tot = core.cube_gof(cube, med, ctx.prior, gate_em,
-                                                        ctx.vel, rb)
+        chi2, resid, x1d, mu_r, sig_tot, cont_med = core.cube_gof(cube, med, ctx.prior,
+                                                                  gate_em, ctx.vel, rb)
         ref = core.cube_gof_reference(ctx.config_path)
-        label, tone, msg = _gate_verdict(chi2, ref)
+        w68 = (np.percentile(samp, 84, axis=0) - np.percentile(samp, 16, axis=0)) \
+            / (ctx.prior.hi - ctx.prior.lo)
+        label, tone, msg = _gate_verdict(chi2, ref, cont_med, w68)
         banner = {"ok": st.success, "warn": st.warning}.get(tone, st.error)
         banner(f"**{label}** — χ²ᵣ = {chi2:.2f} against the held-out reference "
                f"(median {ref['p50']:.1f}, p95 {ref['p95']:.1f}, n={ref['n']}). {msg}")
