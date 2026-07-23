@@ -190,7 +190,16 @@ infers EW instead of fixing it.
     `AppContext` + `load_workspace()` (the per-model bundle threaded to views), and the
     `run_npe`/candidate/χ² compute layer.
   - `app/views/{upload,playground,how}.py` = the three workspace tabs **Upload & infer** /
-    **Forward model** / **Method**. Upload does full parameter disclosure + per-instrument
+    **Forward model** / **Method**. The 1-D flow workspace adds a 4th tab,
+    `app/views/skysurvey.py` — the 192-direction HealPix AGORA survey: upload a bundle
+    (.npz `vel_kms`+`flux (192,N)` RING order, or a zip of per-direction files), all
+    sightlines are fitted amortized, and a rotatable see-through globe (geometry:
+    `app/static/healpix_nside4.json`, regenerate via `uv run --with healpy
+    scripts/make_healpix_grid.py`) colors tiles by χ²ᵣ verdict; clicking a pixel shows
+    its bicone + emulator-overlay fit. 3-D clicks go through the tiny in-repo component
+    `app/components/skyglobe/` (vendored modern plotly.js — the off-the-shelf
+    streamlit-plotly-events bundles a 2021 plotly.js whose mesh3d/scatter3d shaders
+    fail silently on modern Chrome; do not reintroduce it). Upload does full parameter disclosure + per-instrument
     χ²/OOD trust gate (`gof_reference(snr, lsf)`) + the 3D view, and supports paired
     two-aperture uploaders. `app/plots.py` holds the shared plotly builders.
 

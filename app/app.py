@@ -144,7 +144,15 @@ with top_r:
 
 render_sidebar(ctx)
 
-tab_up, tab_fwd, tab_how = st.tabs(["Upload & infer", "Forward model", "Method"])
+if ctx.is_cube:
+    tab_up, tab_fwd, tab_how = st.tabs(["Upload & infer", "Forward model", "Method"])
+else:
+    # 1-D flow workspace gains the AGORA sky-survey tab (192 HealPix directions).
+    from views import skysurvey
+    tab_up, tab_fwd, tab_sky, tab_how = st.tabs(
+        ["Upload & infer", "Forward model", "Sky survey", "Method"])
+    with tab_sky:
+        skysurvey.render(ctx)
 with tab_up:
     upload.render(ctx)
 with tab_fwd:

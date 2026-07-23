@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<!-- Minimal bidirectional Streamlit component: render a plotly figure with the VENDORED
+     modern plotly.js and report 3-D clicks on the pixel-marker trace back to Python.
+     Hand-rolled because streamlit-plotly-events bundles a 2021 plotly.js whose
+     gl-mesh3d / gl-scatter3d shaders fail silently on modern Chrome.  [AI-Claude] -->
+<html>
+<head>
+  <meta charset="utf-8" />
+  <style>
+    html, body { margin: 0; padding: 0; background: transparent; overflow: hidden; }
+    #gd { width: 100%; }
+  </style>
+  <script src="./plotly.min.js"></script>
+</head>
+<body>
+  <div id="gd"></div>
+  <script>
+    function send(type, data) {
+      window.parent.postMessage(Object.assign({ isStreamlitMessage: true, type: type }, data), "*");
+    }
+    let plotted = false;
+    window.addEventListener("message", function (event) {
+      const d = event.data;
+      if (!d || d.type !== "streamlit:render") return;
+      const args = d.args || {};
+      const spec = JSON.parse(args.spec);
+      const h = args.height || 560;
+      send("streamlit:setFrameHeight", { height: h });
+      const gd = document.getElementById("gd");
+      gd.style.height = h + "px";
+      const config = { displaylogo: false, responsive: true };
+      if (!plotted) {
+        Plotly.newPlot(gd, spec.data, spec.layout, config).then(function () {
+          gd.on("plotly_click", function (ev) {
+            const p = ev.points && ev.points[0];
+            // markers trace = curve index given by python (clickCurve)
+            if (p && p.curveNumber === (args.click_curve ?? 2)) {
+              send("streamlit:setComponentValue",
+                   { value: p.pointNumber, dataType: "json" });
+            }
+          });
+        });
+        plotted = true;
+      } else {
+        Plotly.react(gd, spec.data, spec.layout, config);
+      }
+    });
+    send("streamlit:componentReady", { apiVersion: 1 });
+  </script>
+</body>
+</html>
