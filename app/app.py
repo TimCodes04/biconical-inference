@@ -84,9 +84,12 @@ def render_sidebar(ctx):
             st.rerun()
         st.divider()
         if ctx.is_cube:
-            st.caption("IFU spaxel-cube model — infers all 6 wind parameters from the full "
-                       "(x, y, velocity) data cube at native THOR resolution (no instrument "
-                       "model in v1: cubes must match the training normalization/grid).")
+            extra = (" (incl. the intrinsic MgII doublet EW)"
+                     if "ew" in ctx.names else "")
+            st.caption(f"IFU spaxel-cube model — infers all {len(ctx.names)} "
+                       f"parameters{extra} from the full (x, y, velocity) data cube at "
+                       "native THOR resolution (no instrument model in v1: cubes must "
+                       "match the training normalization/grid).")
         elif ctx.cond:
             st.caption("Instrument-conditioned — valid for LSF FWHM 0–200 km/s, SNR 5–100.")
         else:

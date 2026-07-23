@@ -29,17 +29,30 @@ def main():
                             aperture_kpc=lib.get("aperture_kpc"),
                             path=cfg.get("splits", splits.DEFAULT_PATH))
     rows_all = np.nonzero(mask)[0]
-    # SAME selection as core.load_cube_examples (seed 42) so local and deployed agree.
+    # SAME selection as core.load_cube_examples (seed 42 rows, seed 43 EW draws) so
+    # local and deployed examples are identical objects.
     pick = rows_all[np.random.default_rng(42).choice(rows_all.size, size=args.n, replace=False)]
     order = np.argsort(pick)
+    is_em = (cfg.get("npe") or {}).get("train_source") == "library_cube_em"
     with h5py.File(cfg["library"]["out"], "r") as f:
-        srt = f["cubes"][np.sort(pick)].astype(np.float16)
+        srt = f["cubes"][np.sort(pick)].astype(np.float32)
+        srt_line = f["cubes_line"][np.sort(pick)].astype(np.float32) if is_em else None
     cubes = np.empty_like(srt)
     cubes[order] = srt
     idx_in_test = np.searchsorted(rows_all, pick)
+    z_out = z_full[mask][idx_in_test].astype(np.float32)
+    if is_em:
+        # Decomposed emission library: compose cube + EW*line, append the drawn EW as
+        # the 7th truth (linear param: z == physical) — mirrors core.load_cube_examples.
+        line = np.empty_like(srt_line)
+        line[order] = srt_line
+        ew_lo, ew_hi = (float(v) for v in cfg["param_bounds"]["ew"])
+        ew = np.random.default_rng(43).uniform(ew_lo, ew_hi, size=args.n).astype(np.float32)
+        cubes = cubes + ew[:, None, None, None] * line
+        z_out = np.concatenate([z_out, ew[:, None]], axis=1)
     os.makedirs("deploy", exist_ok=True)
     out = os.path.join("deploy", f"holdout_{stem}.npz")
-    np.savez_compressed(out, z=z_full[mask][idx_in_test].astype(np.float32), cubes=cubes,
+    np.savez_compressed(out, z=z_out, cubes=cubes.astype(np.float16),
                         cube_extent_kpc=np.float64(lib["cube_extent_kpc"]),
                         cube_nx=np.int64(lib["cube_nx"]),
                         cube_vel_rebin=np.int64(lib["cube_vel_rebin"]))

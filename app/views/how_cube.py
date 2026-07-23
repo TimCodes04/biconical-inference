@@ -20,6 +20,7 @@ def _img(path, caption):
 def render(ctx):
     nx, _, nvel = ctx.cube_shape
     extent = float((ctx.cube_meta or {}).get("cube_extent_kpc", 60.0))
+    em = "ew" in ctx.names
     st.markdown(f"""
 **The observable.** An MgII spaxel cube — {nx}×{nx} sky pixels over ±{extent:.0f} kpc
 (5 kpc spaxels) × {nvel} velocity bins (53 km/s) spanning −1300…+2100 km/s around MgII K
@@ -33,20 +34,38 @@ CubeCNN embedding: shared per-spaxel spectral convolutions, explicit per-spaxel
 convolutions cannot learn from ~2-photon cells; adding them lifted v_max recovery from
 r = 0.28 to 0.57), a sky-plane CNN, and a concentration pathway carrying the
 aperture-summed spectrum.
+""")
+    if em:
+        st.markdown("""
+**Emission (this model).** Every training example mixes in the intrinsic MgII doublet:
+cube = continuum + EW × line, with EW drawn fresh from U[0, 10] Å (K:H = 2:1) — and the
+**intrinsic EW is inferred as the 7th parameter**. Single-LOS observation cannot read it
+off directly (scattering moves photons out of *and into* the sightline); the flow pins
+it from the joint halo-brightness + infilling + absorption pattern.
 
+**Validation** (reserved held-out THOR rows, never trained on): EW recovered at
+r = 0.99 (slope 0.98, 0.27% median error); logN/θ/i/disk at r ≈ 1.0 (0.4–1.0% of the
+prior range), a_v r = 0.92 (2.7%), v_max r = 0.58 (11.7%) across the full EW ∈ [0, 10]
+population. Coverage sits on the conservative side (0.71–0.75; EW 0.80), TARP max
+deviation 0.052.
+""")
+    else:
+        st.markdown("""
 **Validation** (800 reserved held-out THOR rows, never trained on): coverage 0.68–0.71
 at the 68% level for all six parameters, TARP ≈ diagonal, and the cube model beats the
 former 1-D r_vir model on **every parameter at every inclination** — logN/θ/i/disk to
 0.2–0.5% of the prior range, a_v to 2.2% (r = 0.90), v_max to 9.7% (r = 0.57; honest,
 regime-dependent — see the map below).
-
+""")
+    st.markdown("""
 **Honesty notes.** v_max carries a hard physics ceiling: ground-truth THOR sweeps show a
 ±50 km/s change leaves the cube statistically unchanged at this photon budget, at any
 emission strength — v_max posteriors are wide off-regime *because the data are*. Rare
 overconfident tails exist for v_max at low true speeds and near prior corners; fits
-railing against a prior edge deserve suspicion.
+railing against a prior edge deserve suspicion (the app discloses bound-pinned
+parameters as one-sided limits).
 """)
-    stem = "spaxel6m"
+    stem = os.path.splitext(os.path.basename(ctx.config_path))[0]
     st.divider()
     c1, c2 = st.columns(2)
     with c1:

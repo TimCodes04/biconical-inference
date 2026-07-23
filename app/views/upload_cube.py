@@ -10,6 +10,8 @@ and no emulator/χ² gate exists for cubes (stated in the UI rather than silentl
 
 from __future__ import annotations
 
+import os
+
 import numpy as np
 import plotly.graph_objects as go
 import streamlit as st
@@ -140,8 +142,11 @@ def render(ctx):
         up = st.file_uploader(f"MgII spaxel cube — .npz with key 'cube', shape "
                               f"({nx}, {nx}, {nvel})", type=["npz"], key="cube_up")
     with c2:
+        j_ew = ctx.names.index("ew") if "ew" in ctx.names else None
         labels = ["—"] + [f"held-out example {k:02d} — i={phys_ex[k, j_incl]:.0f}°, "
-                          f"logN={phys_ex[k, 0]:.1f}" for k in range(len(phys_ex))]
+                          f"logN={phys_ex[k, 0]:.1f}"
+                          + (f", EW={phys_ex[k, j_ew]:.1f} Å" if j_ew is not None else "")
+                          for k in range(len(phys_ex))]
         ex_pick = st.selectbox("…or a held-out THOR example (never trained on)",
                                labels, key=f"cube_ex_{ctx.config_path}")
 
@@ -251,10 +256,11 @@ def render(ctx):
     png = _corner_bytes(cube, ctx.config_path, tuple(ctx.names), truth,
                         tuple(float(x) for x in ctx.prior.lo),
                         tuple(float(x) for x in ctx.prior.hi))
+    stem = os.path.splitext(os.path.basename(ctx.config_path))[0]
     tag = (f"example{labels.index(ex_pick) - 1:02d}" if (up is None and ex_pick != "—")
            else f"upload_{abs(hash(cube.tobytes())) % 10**8:08d}")
     st.download_button("⬇  Download corner plot (PNG)", data=png,
-                       file_name=f"corner_spaxel6m_{tag}.png", mime="image/png",
+                       file_name=f"corner_{stem}_{tag}.png", mime="image/png",
                        key=f"corner_dl_{tag}")
     with st.expander("Corner plot — full joint posterior"):
         st.image(png, use_container_width=True)

@@ -23,6 +23,7 @@ from biconical_inference.prior import Prior
 # only offered once its checkpoint is on disk (available_models filters by _ckpt_ready).
 MODEL_CONFIGS = [
     ("Spaxel-cube IFU (moment-channel flow)", "configs/spaxel6m.yaml"),
+    ("Spaxel-cube IFU · emission (EW inferred)", "configs/spaxel7em.yaml"),
 ]
 
 _COLS = [1.9, 0.7, 1.15, 1.05, 0.8]      # manifest grid: name · params · apertures · calib · open
@@ -76,6 +77,21 @@ def _manifest_row(config_path):
     # intrinsic MgII doublet (EW Angstrom), so the model is calibrated for real emission/infilling.
     ew = float((c.get("fixed") or {}).get("ew", 0.0))
     emission = ew > 0
+    # Spaxel-cube family FIRST (torch-free detect via npe.train_source) — without this
+    # branch the cube models fall through to the 1-D heuristics and get mislabeled as
+    # "r_vir single-aperture" on the landing page.
+    ts = (c.get("npe") or {}).get("train_source", "")
+    if ts.startswith("library_cube"):
+        cube_em = ts == "library_cube_em" or "ew" in pr.names
+        if cube_em:
+            return {"name": "Spaxel-cube IFU · emission",
+                    "desc": ("full MgII spaxel cube · 6 wind params + intrinsic doublet "
+                             "EW inferred · moment-channel CubeCNN flow"),
+                    "params": n_inferred, "apertures": "IFU cube", "standard": False}
+        return {"name": "Spaxel-cube IFU",
+                "desc": ("full MgII spaxel cube · 6 wind params · moment-channel "
+                         "CubeCNN flow"),
+                "params": n_inferred, "apertures": "IFU cube", "standard": True}
     if two_ap and incl_set and emission:
         name = "Two-aperture · set i · emission"
         desc = ("inner 20 kpc + r_vir · viewing angle set by user · disk column free · "

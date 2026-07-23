@@ -342,10 +342,12 @@ PARAM_META = {
     "vexp_kms":     ("v_max", "km/s", "outflow speed at the cone edge"),
     "sigmaran_kms": ("σ_ran", "km/s", "wind turbulent broadening"),
     "disk_logN":    ("logN_disk", "log₁₀ cm⁻²", "disk MgII column density"),
+    "ew":           ("EW", "Å", "intrinsic MgII doublet equivalent width"),
 }
 
 UNITS = {"logN": "log cm⁻²", "theta": "deg", "av": "", "incl": "deg",
-         "vexp_kms": "km/s", "sigmaran_kms": "km/s", "disk_logN": "log cm⁻²"}
+         "vexp_kms": "km/s", "sigmaran_kms": "km/s", "disk_logN": "log cm⁻²",
+         "ew": "Å"}
 
 
 def param_disclosure(samp, prior, names):
@@ -489,12 +491,26 @@ def load_cube_examples(config_path):
     rows_all = np.nonzero(mask)[0]
     pick = rows_all[np.random.default_rng(42).choice(rows_all.size, size=24, replace=False)]
     order = np.argsort(pick)
+    # Emission (v4 decomposed) library: cubes are stored as continuum + per-Å line and
+    # composed at OBSERVATION time as cube + EW·line, with the drawn EW appended as the
+    # model's 7th truth (linear param: z == physical). Seeds (42 rows, 43 EWs) match
+    # scripts/make_cube_deploy_pack.py so local and deployed examples are identical.
+    is_em = (cfg.get("npe") or {}).get("train_source") == "library_cube_em"
     with h5py.File(lib_path, "r") as f:
         srt = f["cubes"][np.sort(pick)].astype(np.float32)
+        srt_line = f["cubes_line"][np.sort(pick)].astype(np.float32) if is_em else None
     cubes = np.empty_like(srt)
     cubes[order] = srt
     idx_in_test = np.searchsorted(rows_all, pick)
-    return {"z": z_full[mask][idx_in_test], "cubes": cubes}
+    z = z_full[mask][idx_in_test]
+    if is_em:
+        line = np.empty_like(srt_line)
+        line[order] = srt_line
+        ew_lo, ew_hi = (float(v) for v in cfg["param_bounds"]["ew"])
+        ew = np.random.default_rng(43).uniform(ew_lo, ew_hi, size=len(pick)).astype(np.float32)
+        cubes = cubes + ew[:, None, None, None] * line
+        z = np.concatenate([z, ew[:, None]], axis=1)
+    return {"z": z, "cubes": cubes}
 
 
 # ---- cube-fit goodness of fit (no cube emulator: the 1-D r_vir surrogate) ----
