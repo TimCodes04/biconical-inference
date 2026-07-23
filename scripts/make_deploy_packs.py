@@ -26,7 +26,8 @@ import yaml
 from biconical_inference import splits as _splits
 from biconical_inference.library import load_library
 
-DEPLOYABLE = ["configs/2ap.yaml", "configs/5param2ap.yaml",
+DEPLOYABLE = ["configs/rvir6.yaml",
+              "configs/2ap.yaml", "configs/5param2ap.yaml",
               "configs/default.yaml", "configs/5param.yaml",
               "configs/5param2ap_em.yaml"]
 

@@ -24,6 +24,7 @@ from biconical_inference.prior import Prior
 MODEL_CONFIGS = [
     ("Spaxel-cube IFU (moment-channel flow)", "configs/spaxel6m.yaml"),
     ("Spaxel-cube IFU · emission (EW inferred)", "configs/spaxel7em.yaml"),
+    ("r_vir single-aperture (1-D flow)", "configs/rvir6.yaml"),
 ]
 
 _COLS = [1.9, 0.7, 1.15, 1.05, 0.8]      # manifest grid: name · params · apertures · calib · open
@@ -114,11 +115,10 @@ def _manifest_row(config_path):
     else:
         name, desc = "General", "full 6-D wind prior · σ_ran free"
         apertures = "r_vir"
-    # The two-aperture model was the original "standard"; the single-aperture r_vir flow (disk free)
-    # is the current sole model, so it reads as standard too.
-    single_flow = (not two_ap) and ("disk_logN" in pr.names)
+    # The spaxel-cube family (handled above) is the current flagship — 1-D families,
+    # including the from-scratch r_vir flow, list without the "standard" badge.
     return {"name": name, "desc": desc, "params": n_inferred, "apertures": apertures,
-            "standard": (two_ap and not incl_set) or single_flow}
+            "standard": False}
 
 
 def render(avail):

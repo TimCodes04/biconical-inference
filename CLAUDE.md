@@ -18,13 +18,21 @@ work is the **ML half** (emulator → NPE → validation → frontend), which no
 model families** (see "Model families" below); real-data ingestion in `obs/loader.py` is
 still a stub.
 
-**Branch `spaxel_npe`** (off `tims_own_model`) hosts the **spaxel-cube family**
-(`configs/spaxel6.yaml`, ckpt `checkpoints/npe_spaxel6.pt`): the same 6 params inferred from
-a (24, 24, 64) IFU cube (±60 kpc, 53 km/s bins; library `library_spaxel.h5`, schema v3,
-1M-photon THOR run). CubeCNN v2 + the hand-built flow, trained on raw cubes (no noise
-model, no emulator). Beats the 1-D r_vir model 4–10× on logN/θ/incl/disk_logN, recovers
-`av` (r=0.87); `vexp` is information-limited (emission library is the lever). Authoritative
-writeup: **`SPAXEL_MODEL_VALIDATION.md`**; pipeline comparison: `SPAXEL_VS_1D.md`.
+**Branch `spaxel_npe`** (off `tims_own_model`) hosts the **spaxel-cube family**: the same
+6 params inferred from a (24, 24, 64) IFU cube (±60 kpc, 53.125 km/s bins = the canonical
+grid ×4; library `library_spaxel.h5`, schema v3, 1M-photon THOR run). Shipped continuum
+model: **spaxel6m** (`configs/spaxel6m.yaml`, ckpt `npe_spaxel6m.pt`) — CubeCNN with
+explicit velocity-moment channels + the hand-built flow, trained on raw cubes (no noise
+model, no emulator); beats the 1-D r_vir model on every parameter at every inclination;
+`vexp` is information-limited (physics ceiling — `VEXP_INVESTIGATION.md`). Emission model:
+**spaxel7em** (`configs/spaxel7em.yaml`, v4 DECOMPOSED library `library_spaxel_em.h5`:
+observables composed cube_cont + EW·cube_line at train/observe time) additionally infers
+the intrinsic MgII doublet EW ∈ [0, 10] Å (r = 0.99; the 6 wind params pay a ~1.5–2×
+precision tax). Cube fits carry a χ²ᵣ/OOD trust gate — the 1-D r_vir emulator scores the
+sky-collapsed cube (library invariant: Σ_spaxels/vel_rebin == the r_vir aperture spectrum;
+continuum-only, so spaxel6m only) — and bound-railed params are disclosed as one-sided
+limits (edge-of-prior audit: `SPAXEL_MODEL_VALIDATION.md` §9). Authoritative writeup:
+**`SPAXEL_MODEL_VALIDATION.md`**; pipeline comparison: `SPAXEL_VS_1D.md`.
 
 **Branch `tims_own_model`** additionally hosts a from-scratch flow-NPE for the single-aperture
 r_vir model (`configs/rvir6.yaml`, shipped ckpt `checkpoints/npe_rvir6_lib.pt`, library-trained).
@@ -88,12 +96,21 @@ prior.py ─ sample.py ─ thor_sim/* ── library.h5 ── emulator/* ──
 ### Model families (one config = one family)
 
 A "model" is a `(config, emulator.pt, npe.pt, library.h5, validation/<stem>/)` bundle. The
-app manifest (`app/home.py:MODEL_CONFIGS`) offers any family whose checkpoints exist; the
-CLI steps above are all `--config`-driven. The four shipped families:
+app manifest (`app/home.py:MODEL_CONFIGS`) currently lists **three** models — the spaxel
+cube pair + the from-scratch 1-D flow — each needing its committed checkpoint(s) and a
+`deploy/holdout_<stem>.npz` pack for Streamlit Cloud:
 
-| Family (app label)          | Config              | Inferred θ | Distinctive feature |
+| Family (app label)              | Config                 | Inferred θ | Distinctive feature |
+|---------------------------------|------------------------|-----------|---------------------|
+| **Spaxel-cube IFU** (standard)  | `configs/spaxel6m.yaml`| 6         | full (24,24,64) cube, moment-channel CubeCNN + hand-built flow; χ²ᵣ/OOD gate |
+| Spaxel-cube IFU · emission      | `configs/spaxel7em.yaml`| 7        | + intrinsic MgII doublet EW inferred (decomposed library, cube+EW·line composition) |
+| r_vir single-aperture (1-D)     | `configs/rvir6.yaml`   | 6         | from-scratch flow on the 1-D r_vir spectrum; emulator χ² gate + candidates |
+
+Older 1-D sbi-era families remain runnable via `--config` (not app-listed):
+
+| Family                      | Config              | Inferred θ | Distinctive feature |
 |-----------------------------|---------------------|-----------|---------------------|
-| **Two-aperture** (standard) | `configs/2ap.yaml`  | 6         | inner 20 kpc + r_vir apertures; `disk_logN` is a **free** param |
+| Two-aperture                | `configs/2ap.yaml`  | 6         | inner 20 kpc + r_vir apertures; `disk_logN` is a **free** param |
 | Two-aperture · set *i*      | `configs/5param2ap.yaml` | 5    | `incl` promoted to a **user-set conditioner** (`context_params: [incl]`); reuses `library_2ap.h5` + `emulator_2ap.pt` |
 | General                     | `configs/default.yaml`   | 6    | original single-aperture full 6-D wind prior |
 | Precise                     | `configs/5param.yaml`    | 5    | single-aperture, σ_ran fixed → sharper logN/θ/i |
@@ -105,7 +122,7 @@ user-set conditioners; a conditioned param is *appended to x*, not inferred). `a
 (`AppContext`, `run_npe`) and `npe/infer.py` dispatch on both. `configs/{pilot_2ap,
 sherlock_2ap,sherlock_5param}.yaml` are the data-gen counterparts.
 
-**In progress — emission variant.** `configs/5param2ap_em.yaml` (generation
+**1-D emission variant (built 2026-07-08).** `configs/5param2ap_em.yaml` (generation
 `sherlock_2ap_em.yaml`, pilot `pilot_2ap_em.yaml`, bigger-NPE A/B `5param2ap_em_big.yaml`)
 is a set-*i* two-aperture family whose training spectra **mix in the intrinsic MgII doublet
 at EW = 5 Å** — `fixed.ew: 5.0` + `library.n_line > 0` flips on THOR's second `line` subrun
@@ -114,8 +131,9 @@ inference is calibrated for real emission/infilling. Because the spectra change 
 own library (`library_2ap_em.h5`) **and a retrained emulator** (`emulator_2ap_em.pt`) — it
 cannot reuse the continuum-only artifacts (unlike `5param2ap`, which reuses both). Bounds are
 identical to `2ap` (emission never enters the far-blue continuum window, so the sensible-value
-envelope is unchanged). Runbook: `SHERLOCK_2AP_EM.md`; the app auto-lists it once its
-checkpoints exist. Pending the Sherlock generation run.
+envelope is unchanged). Runbook: `SHERLOCK_2AP_EM.md`. Library + checkpoints exist
+(trained/validated 2026-07-08); superseded in the app by the spaxel7em cube model, which
+infers EW instead of fixing it.
 
 - **`thor_sim/`** is **vendored from THOR** (see `__init__.py` for the source commit).
   `simulate(params,…)` is the single forward-model entry point: write config(s) →
