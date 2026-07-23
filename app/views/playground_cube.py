@@ -33,12 +33,14 @@ def render(ctx):
     p = dict(zip(ctx.names, phys[k]))
     st.markdown("  ·  ".join(f"**{core.PARAM_META[n][0]}** = {p[n]:.3g} {core.PARAM_META[n][1]}"
                              for n in ctx.names))
-    st.plotly_chart(_channel_fig(ex["cubes"][k], ctx.vel, extent), use_container_width=True)
+    st.plotly_chart(_channel_fig(ex["cubes"][k], ctx.vel, extent),
+                    use_container_width=True, key="pg_channels")
     c1, c2 = st.columns([0.55, 0.45])
     with c1:
-        st.plotly_chart(_moment_fig(ex["cubes"][k], ctx.vel, extent), use_container_width=True)
+        st.plotly_chart(_moment_fig(ex["cubes"][k], ctx.vel, extent),
+                        use_container_width=True, key="pg_moments")
     with c2:
         fig3d = core.cached_biconical(*core.round_pv(p["theta"], p["incl"], p["av"],
                                                      p["vexp_kms"], p["logN"], 100.0),
                                       disk_hh_kpc=0.5, disk_on=True, preview=True)
-        st.plotly_chart(fig3d, use_container_width=True)
+        st.plotly_chart(fig3d, use_container_width=True, key="pg_wind3d")

@@ -195,9 +195,11 @@ def render(ctx):
         return
 
     st.markdown("<span class='bw-eyebrow'>The observation</span>", unsafe_allow_html=True)
-    st.plotly_chart(_channel_fig(cube, ctx.vel, extent), use_container_width=True)
+    st.plotly_chart(_channel_fig(cube, ctx.vel, extent), use_container_width=True,
+                    key="up_channels")
     with st.expander("Velocity-moment maps (the kinematic representation the model reads)"):
-        st.plotly_chart(_moment_fig(cube, ctx.vel, extent), use_container_width=True)
+        st.plotly_chart(_moment_fig(cube, ctx.vel, extent), use_container_width=True,
+                        key="up_moments")
 
     samp, _ = core.cached_infer(cube, 30.0, 0.0, ctx.config_path)
     rows, med = core.param_disclosure(samp, ctx.prior, ctx.names)
@@ -246,7 +248,7 @@ def render(ctx):
         with st.expander("Collapsed-spectrum fit — data vs model at the posterior median"):
             st.plotly_chart(plots.fit_residual_plotly(ctx.vel, x1d, mu_r, sig_tot,
                                                       resid, chi2),
-                            use_container_width=True)
+                            use_container_width=True, key="up_gof_fit")
             st.caption("Summing the cube over the sky reproduces the r_vir-aperture 1-D "
                        "spectrum exactly (a library invariant), so the 1-D r_vir emulator "
                        "at the cube fit's posterior median is a true forward model of this "
@@ -271,4 +273,4 @@ def render(ctx):
     fig3d = core.cached_biconical(*core.round_pv(p["theta"], p["incl"], p["av"],
                                                  p["vexp_kms"], p["logN"], 100.0),
                                   disk_hh_kpc=0.5, disk_on=True)
-    st.plotly_chart(fig3d, use_container_width=True)
+    st.plotly_chart(fig3d, use_container_width=True, key="up_wind3d")
