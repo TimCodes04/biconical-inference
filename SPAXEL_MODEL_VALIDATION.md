@@ -203,3 +203,38 @@ Fit-ready today (simulation-frame): quote logN/theta/incl/disk_logN/av posterior
 apply the §6 offset remap to point estimates; flag near-cap saturated fits (§5.4).
 Before real MUSE data: add the instrument model (deferred item 4) and the real-data
 ingestion path (`obs/loader.py` is a stub).
+
+## 9. Edge-of-prior calibration audit (2026-07-22, spaxel6m)
+
+Question: are the tight/railed posteriors seen at prior bounds physical findings or a
+flow artifact? Protocol: 540 reserved held-out rows (run-level split, fingerprint-
+verified; never trained on), stratified per param into bottom-/top-decile truths + an
+all-interior control pool; per-fit coverage/SBC-rank/width/rail-mass stats. Findings
+independently replicated on a disjoint 120-row subset and adversarially verified
+(`scripts/edge_calibration_audit.py` → `validation/spaxel6m/edge_calibration.json`).
+
+**Verdict: no overconfidence artifact on in-distribution data.** Interior cov68 =
+0.77–0.92 (conservative), cov90 = 0.95–0.99. Zero false rails for logN/theta/av/incl/
+disk_logN across ~1,900 interior-truth instances; when truth genuinely sits at a bound
+the posterior rails on the CORRECT side only (2.5–7.5% of edge-truth fits). Tight rails
+at v_max = 600 / θ = 82 on user uploads therefore indicate OOD input or model
+misspecification (the χ² gate's job), or genuinely edge-valued truth — not a generic
+flow edge artifact.
+
+Three bounded caveats (all shrinkage toward prior mass, not overconfidence, except 1):
+
+1. **v_max low-bound rail — the one confidently-wrong mode.** 1/540 fits (wide-cone
+   θ≈81 + near-face-on) railed tight at 50 km/s with the 118 km/s truth entirely
+   outside the posterior; a second interior fit piled 40% of v_max mass there. Rate
+   ~0.3% of interior-vexp fits, concentrated in the θ≈82/face-on corner. The app now
+   warns when >30% of v_max mass sits at the low bound.
+2. **Near-face-on inclination** (i < 9°, ~1.2% of the cos-uniform prior): cov68 = 0.40,
+   median bias +1.5° (+1.4σ), 12.5% of fits >3σ off — quoted incl errors should be
+   read ~2× wider there (app caption at i ≲ 12°).
+3. **High v_max** (>545 km/s): cov68 = 0.10 purely via a WIDE posterior (median 68%
+   width = 57% of the prior) shrinking ~−310 km/s toward the prior middle — rank
+   saturation on the known information-limited parameter, never a tight rail.
+
+App-side disclosures shipped with this audit: bound-pinned parameters are reported as
+one-sided limits ("at upper bound — limit", `core.param_disclosure`), plus the two
+targeted cautions above in the cube workspace.

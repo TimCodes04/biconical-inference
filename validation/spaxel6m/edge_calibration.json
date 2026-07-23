@@ -1,0 +1,258 @@
+{
+  "config": "configs/spaxel6m.yaml",
+  "n_fits": 540,
+  "params": [
+    "logN",
+    "theta",
+    "av",
+    "incl",
+    "vexp_kms",
+    "disk_logN"
+  ],
+  "lo": [
+    11.0,
+    15.0,
+    0.5,
+    0.0,
+    50.0,
+    13.0
+  ],
+  "hi": [
+    16.0,
+    82.0,
+    2.0,
+    90.0,
+    600.0,
+    16.0
+  ],
+  "per_param": {
+    "logN": {
+      "interior": {
+        "n": 82,
+        "cov68": 0.878,
+        "cov90": 0.951,
+        "median_w68": 0.0046,
+        "rail_rate": 0.0,
+        "rank_mean": 0.455,
+        "rank_frac_lt05": 0.037,
+        "rank_frac_gt95": 0.012
+      },
+      "edge_lo": {
+        "n": 40,
+        "cov68": 0.7,
+        "cov90": 0.875,
+        "median_w68": 0.0721,
+        "rail_rate": 0.025,
+        "rank_mean": 0.382,
+        "rank_frac_lt05": 0.075,
+        "rank_frac_gt95": 0.05,
+        "correct_rail_rate": 0.025,
+        "wrong_side_rail_rate": 0.0
+      },
+      "edge_hi": {
+        "n": 40,
+        "cov68": 0.625,
+        "cov90": 0.8,
+        "median_w68": 0.0034,
+        "rail_rate": 0.075,
+        "rank_mean": 0.446,
+        "rank_frac_lt05": 0.1,
+        "rank_frac_gt95": 0.1,
+        "correct_rail_rate": 0.075,
+        "wrong_side_rail_rate": 0.0
+      }
+    },
+    "theta": {
+      "interior": {
+        "n": 82,
+        "cov68": 0.854,
+        "cov90": 0.951,
+        "median_w68": 0.0187,
+        "rail_rate": 0.0,
+        "rank_mean": 0.513,
+        "rank_frac_lt05": 0.024,
+        "rank_frac_gt95": 0.024
+      },
+      "edge_lo": {
+        "n": 40,
+        "cov68": 0.725,
+        "cov90": 0.85,
+        "median_w68": 0.0154,
+        "rail_rate": 0.05,
+        "rank_mean": 0.449,
+        "rank_frac_lt05": 0.1,
+        "rank_frac_gt95": 0.05,
+        "correct_rail_rate": 0.05,
+        "wrong_side_rail_rate": 0.0
+      },
+      "edge_hi": {
+        "n": 40,
+        "cov68": 0.6,
+        "cov90": 0.775,
+        "median_w68": 0.01,
+        "rail_rate": 0.05,
+        "rank_mean": 0.493,
+        "rank_frac_lt05": 0.075,
+        "rank_frac_gt95": 0.15,
+        "correct_rail_rate": 0.05,
+        "wrong_side_rail_rate": 0.0
+      }
+    },
+    "av": {
+      "interior": {
+        "n": 82,
+        "cov68": 0.878,
+        "cov90": 0.976,
+        "median_w68": 0.0774,
+        "rail_rate": 0.0,
+        "rank_mean": 0.509,
+        "rank_frac_lt05": 0.012,
+        "rank_frac_gt95": 0.012
+      },
+      "edge_lo": {
+        "n": 40,
+        "cov68": 0.65,
+        "cov90": 0.875,
+        "median_w68": 0.0473,
+        "rail_rate": 0.075,
+        "rank_mean": 0.385,
+        "rank_frac_lt05": 0.1,
+        "rank_frac_gt95": 0.025,
+        "correct_rail_rate": 0.075,
+        "wrong_side_rail_rate": 0.0
+      },
+      "edge_hi": {
+        "n": 40,
+        "cov68": 0.525,
+        "cov90": 0.675,
+        "median_w68": 0.0561,
+        "rail_rate": 0.0,
+        "rank_mean": 0.756,
+        "rank_frac_lt05": 0.025,
+        "rank_frac_gt95": 0.3,
+        "correct_rail_rate": 0.0,
+        "wrong_side_rail_rate": 0.0
+      }
+    },
+    "incl": {
+      "interior": {
+        "n": 82,
+        "cov68": 0.768,
+        "cov90": 0.951,
+        "median_w68": 0.0182,
+        "rail_rate": 0.0,
+        "rank_mean": 0.537,
+        "rank_frac_lt05": 0.0,
+        "rank_frac_gt95": 0.049
+      },
+      "edge_lo": {
+        "n": 40,
+        "cov68": 0.4,
+        "cov90": 0.575,
+        "median_w68": 0.0317,
+        "rail_rate": 0.0,
+        "rank_mean": 0.275,
+        "rank_frac_lt05": 0.375,
+        "rank_frac_gt95": 0.05,
+        "correct_rail_rate": 0.0,
+        "wrong_side_rail_rate": 0.0
+      },
+      "edge_hi": {
+        "n": 40,
+        "cov68": 0.625,
+        "cov90": 0.875,
+        "median_w68": 0.0034,
+        "rail_rate": 0.075,
+        "rank_mean": 0.517,
+        "rank_frac_lt05": 0.075,
+        "rank_frac_gt95": 0.05,
+        "correct_rail_rate": 0.075,
+        "wrong_side_rail_rate": 0.0
+      }
+    },
+    "vexp_kms": {
+      "interior": {
+        "n": 82,
+        "cov68": 0.915,
+        "cov90": 0.988,
+        "median_w68": 0.3941,
+        "rail_rate": 0.0,
+        "rank_mean": 0.64,
+        "rank_frac_lt05": 0.0,
+        "rank_frac_gt95": 0.012
+      },
+      "edge_lo": {
+        "n": 40,
+        "cov68": 0.55,
+        "cov90": 0.875,
+        "median_w68": 0.3538,
+        "rail_rate": 0.0,
+        "rank_mean": 0.314,
+        "rank_frac_lt05": 0.075,
+        "rank_frac_gt95": 0.05,
+        "correct_rail_rate": 0.0,
+        "wrong_side_rail_rate": 0.0
+      },
+      "edge_hi": {
+        "n": 40,
+        "cov68": 0.1,
+        "cov90": 0.3,
+        "median_w68": 0.5724,
+        "rail_rate": 0.0,
+        "rank_mean": 0.941,
+        "rank_frac_lt05": 0.0,
+        "rank_frac_gt95": 0.7,
+        "correct_rail_rate": 0.0,
+        "wrong_side_rail_rate": 0.0
+      }
+    },
+    "disk_logN": {
+      "interior": {
+        "n": 82,
+        "cov68": 0.805,
+        "cov90": 0.951,
+        "median_w68": 0.0064,
+        "rail_rate": 0.0,
+        "rank_mean": 0.529,
+        "rank_frac_lt05": 0.024,
+        "rank_frac_gt95": 0.024
+      },
+      "edge_lo": {
+        "n": 40,
+        "cov68": 0.675,
+        "cov90": 0.825,
+        "median_w68": 0.0099,
+        "rail_rate": 0.025,
+        "rank_mean": 0.483,
+        "rank_frac_lt05": 0.125,
+        "rank_frac_gt95": 0.05,
+        "correct_rail_rate": 0.025,
+        "wrong_side_rail_rate": 0.0
+      },
+      "edge_hi": {
+        "n": 40,
+        "cov68": 0.7,
+        "cov90": 0.85,
+        "median_w68": 0.0072,
+        "rail_rate": 0.075,
+        "rank_mean": 0.578,
+        "rank_frac_lt05": 0.05,
+        "rank_frac_gt95": 0.1,
+        "correct_rail_rate": 0.075,
+        "wrong_side_rail_rate": 0.0
+      }
+    }
+  },
+  "false_rail": {
+    "n_interior": 82,
+    "any_param_rate": 0.0,
+    "per_param": {
+      "logN": 0.0,
+      "theta": 0.0,
+      "av": 0.0,
+      "incl": 0.0,
+      "vexp_kms": 0.0,
+      "disk_logN": 0.0
+    }
+  }
+}

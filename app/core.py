@@ -350,7 +350,13 @@ UNITS = {"logN": "log cm⁻²", "theta": "deg", "av": "", "incl": "deg",
 
 def param_disclosure(samp, prior, names):
     """Full per-parameter disclosure: median, 68% & 95% credible intervals, and a
-    constraint-quality flag (68% width relative to the prior range)."""
+    constraint-quality flag (68% width relative to the prior range).
+
+    A parameter whose posterior PILES ONTO A PRIOR BOUND (>50% of draws within 1% of
+    the edge) is disclosed as a one-sided LIMIT: the model prefers values at or beyond
+    the trained range, so the razor-thin interval at the edge is a boundary statement,
+    not a measurement — quoting it as median ± CI would overstate the precision."""
+    samp = np.asarray(samp, dtype=float)
     med = np.median(samp, axis=0)
     lo68, hi68 = np.percentile(samp, [16, 84], axis=0)
     lo95, hi95 = np.percentile(samp, [2.5, 97.5], axis=0)
@@ -358,13 +364,23 @@ def param_disclosure(samp, prior, names):
     rows = []
     for j, nm in enumerate(names):
         sym, unit, desc = PARAM_META.get(nm, (nm, "", ""))
+        rail_hi = float(np.mean(samp[:, j] > prior.hi[j] - 0.01 * prange[j]))
+        rail_lo = float(np.mean(samp[:, j] < prior.lo[j] + 0.01 * prange[j]))
         w = (hi68[j] - lo68[j]) / prange[j]
-        quality = "well" if w < 0.15 else ("moderate" if w < 0.40 else "weak")
+        if rail_hi > 0.5:
+            ci95 = f"≥ {np.percentile(samp[:, j], 5):.3g} (one-sided)"
+            quality = f"at upper bound {prior.hi[j]:g} — limit"
+        elif rail_lo > 0.5:
+            ci95 = f"≤ {np.percentile(samp[:, j], 95):.3g} (one-sided)"
+            quality = f"at lower bound {prior.lo[j]:g} — limit"
+        else:
+            ci95 = f"[{lo95[j]:.3g}, {hi95[j]:.3g}]"
+            quality = "well" if w < 0.15 else ("moderate" if w < 0.40 else "weak")
         rows.append({
             "parameter": f"{sym} — {desc}",
             "median": f"{med[j]:.3g}",
             "68% credible": f"[{lo68[j]:.3g}, {hi68[j]:.3g}]",
-            "95% credible": f"[{lo95[j]:.3g}, {hi95[j]:.3g}]",
+            "95% credible": ci95,
             "unit": unit,
             "constraint": quality,
         })

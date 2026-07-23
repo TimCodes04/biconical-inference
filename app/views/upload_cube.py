@@ -201,6 +201,26 @@ def render(ctx):
         for r, t in zip(rows, truth):
             r["true (held-out)"] = f"{t:.3g}"
     st.table(rows)
+    if any(r["constraint"].endswith("limit") for r in rows):
+        st.caption("⚠ Parameters marked **at … bound — limit** pile against the edge of the "
+                   "trained prior: the model prefers values at or beyond its trained range. "
+                   "Read those rows as one-sided limits, not measurements — on non-biconical "
+                   "input this railing is the model's way of signaling misspecification.")
+    # Audited edge cautions (validation/spaxel6m/edge_calibration.json, 660 held-out fits):
+    # the ONE confirmed confidently-wrong in-distribution mode is v_max piling at the LOW
+    # bound (~0.3% of fits, wide-cone + near-face-on corner); near-face-on inclinations
+    # carry ~2x-underquoted errors (cov68 = 0.40 at i < 9 deg).
+    j_v, j_i = ctx.names.index("vexp_kms"), ctx.names.index("incl")
+    v_rng = ctx.prior.hi[j_v] - ctx.prior.lo[j_v]
+    if float(np.mean(samp[:, j_v] < ctx.prior.lo[j_v] + 0.01 * v_rng)) > 0.3:
+        st.warning("v_max piles against the lower bound (50 km/s). The edge-calibration audit "
+                   "found this exact pattern is the flow's one confidently-wrong failure corner "
+                   "on valid data (~0.3% of fits, wide-cone + near-face-on winds) — do not "
+                   "quote the v_max row without an independent check.")
+    if med[j_i] < 12.0:
+        st.caption("Near-face-on fit (i ≲ 12°): the edge-calibration audit measured 68%-interval "
+                   "coverage of only 0.40 in this corner (~1% of the training prior) with a "
+                   "+1.5° median bias — mentally double the quoted inclination error bars.")
     st.caption("Raw-THOR fixed-instrument model; error bars validated on held-out simulations "
                "(cov68 ≈ 0.68–0.71). v_max posteriors are honest but wide except for "
                "high-column, low-inclination winds (see Method → regime map).")

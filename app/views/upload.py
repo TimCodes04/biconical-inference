@@ -33,6 +33,8 @@ from biconical_inference.thor_sim.constants import BOXSIZE_KPC
 
 def _constraint(constraint_text):
     """(chip-suffix, card-suffix, label) for a param_disclosure constraint string."""
+    if constraint_text.endswith("limit"):     # posterior piled on a prior bound
+        return "weak", "weak", "at prior bound — limit"
     if "well" in constraint_text:
         return "well", "constrained", "well constrained"
     if "moderate" in constraint_text:
@@ -512,6 +514,10 @@ def render(ctx: core.AppContext):
 
     with st.expander("Full parameter table + export"):
         st.dataframe(rows, hide_index=True, width="stretch")
+        if any(r["constraint"].endswith("limit") for r in rows):
+            st.caption("⚠ Rows marked **at … bound — limit**: the posterior piles against the "
+                       "edge of the trained prior — read them as one-sided limits, not "
+                       "measurements.")
         _export_row(ctx, samp, names, rows, med, cands, chi2, ref, trustworthy, snr_in, lsf_in,
                     incl_constraint=(None if incl0 is None else
                                      {"incl_deg": incl0, "sigma_deg": incl_sigma,
