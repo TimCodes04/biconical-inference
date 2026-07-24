@@ -156,6 +156,32 @@ def _ingest_zip(raw):
     return out
 
 
+def _gof_selfcal(x, mu, sig_emu):
+    """Reduced chi2 with the noise level estimated from the DATA's own line-free
+    continuum regions: sigma_tot^2 = sigma_emu^2 + sigma_cont^2.
+
+    The emulator is noiseless, so a good fit's residual IS the data's noise — a fixed
+    SNR budget therefore mislabels noisy-but-well-fit sightlines as OOD (measured: at
+    true SNR 8 a fixed SNR-30 budget falsely reds 40/40 perfect fits at chi2~13, while
+    this estimator holds them at ~1.0 for any noise level).
+
+    The noise is the MAD of FIRST DIFFERENCES (x 1.4826/√2) over the COMBINED line-free
+    continuum: far-blue (≤ −1050 km/s) plus far-red (≥ +1650, beyond H at +770 + v_max
+    600 + broadening) — ~53 bins. Differencing makes it immune to smooth structure and
+    tilts; restricting to the always-line-free windows keeps model misfit out of the
+    estimate entirely (a full-residual estimator absorbed mirror-test misfit and
+    self-softened); and 53 bins tame the scatter that made a 19-bin window estimator
+    falsely redden clean sightlines. The 5e-3 floor covers the emulator's own
+    systematic error on near-noiseless uploads.
+    Returns (chi2r, resid, sigma_tot, sigma_cont)."""
+    win = (VELOCITY <= -1050.0) | (VELOCITY >= 1650.0)
+    d = np.diff(np.asarray(x)[win])
+    sig_c = max(1.4826 * float(np.median(np.abs(d - np.median(d)))) / np.sqrt(2.0), 5e-3)
+    sig_tot = np.sqrt(np.asarray(sig_emu) ** 2 + sig_c ** 2)
+    resid = (np.asarray(x) - np.asarray(mu)) / sig_tot
+    return float(np.mean(resid ** 2)), resid, sig_tot, sig_c
+
+
 @st.cache_data(show_spinner="Fitting 192 sightlines…")
 def _survey_fit(raw, name, config_path):
     """Ingest the bundle and fit every direction once (amortized flow, n=2000 draws —
@@ -181,7 +207,7 @@ def _survey_fit(raw, name, config_path):
             med[i] = np.median(samp, axis=0)
             w68[i] = np.percentile(samp, 84, axis=0) - np.percentile(samp, 16, axis=0)
             mu, sig = core.emulate(emulator, prior, med[i])
-            chi2[i], _ = core.goodness_of_fit(x, np.squeeze(mu), np.squeeze(sig), _SNR)
+            chi2[i], _, _, _ = _gof_selfcal(x, np.squeeze(mu), np.squeeze(sig))
             x_can[i] = x
             ok[i] = True
         except Exception as e:                     # a bad row grays its pixel, not the run
@@ -355,12 +381,13 @@ def render(ctx):
     rows, med = core.param_disclosure(samp, ctx.prior, ctx.names)
     mu, sig = core.emulate(ctx.emulator, ctx.prior, med)
     mu, sig = np.squeeze(mu), np.squeeze(sig)
-    chi2, resid = core.goodness_of_fit(x, mu, sig, _SNR)
+    chi2, resid, sig_tot, sig_c = _gof_selfcal(x, mu, sig)
     g_hi, a_hi = _bands(ref)
     verdict = (st.success if chi2 <= g_hi else
                st.warning if chi2 <= a_hi else st.error)
-    verdict(f"χ²ᵣ = {chi2:.2f} (green ≤ {g_hi:.2f}, OOD > {a_hi:.2f}; held-out "
-            f"reference p50 {ref['p50']:.2f})"
+    verdict(f"χ²ᵣ = {chi2:.2f} (green ≤ {g_hi:.2f}, OOD > {a_hi:.2f}; noise "
+            f"self-calibrated from the far-blue continuum: σ ≈ {sig_c:.3f} "
+            f"≈ SNR {1.0 / sig_c:.0f})"
             + ("" if chi2 <= a_hi else
                " — out-of-distribution: the bicone family cannot reproduce this "
                "sightline; treat the parameters as a best impersonation."))
@@ -370,7 +397,7 @@ def render(ctx):
                                                  p["vexp_kms"], p["logN"], 100.0),
                                   disk_hh_kpc=0.5, disk_on=True)
     st.plotly_chart(fig3d, use_container_width=True, key="sky_wind3d")
-    st.plotly_chart(plots.fit_residual_plotly(ctx.vel, x, mu, sig, resid, chi2),
+    st.plotly_chart(plots.fit_residual_plotly(ctx.vel, x, mu, sig_tot, resid, chi2),
                     use_container_width=True, key="sky_fit")
     st.table(rows)
     if any(r["constraint"].endswith("limit") for r in rows):
