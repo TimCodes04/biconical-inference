@@ -156,9 +156,42 @@ def _ingest_zip(raw):
     return out
 
 
-def _gof_selfcal(x, mu, sig_emu):
+def _native_sigma(v, f):
+    """Per-bin noise of an input spectrum estimated on ITS OWN grid, where bins are
+    still independent — diff-MAD over the line-free windows, normalized by the same
+    far-blue continuum level ingestion divides by. Estimating AFTER resampling is a
+    trap: upsampling coarse data (e.g. AGORA's 30 km/s bins -> canonical 13.28) makes
+    ~half of adjacent canonical bins share a native bin, first differences collapse,
+    and sigma reads ~2.5x low (measured: 27/30 PERFECT fits flagged amber/red).
+    Down-sampled inputs get the sqrt(n_avg) reduction of bin averaging. Returns the
+    canonical-grid per-bin sigma, or None when the input has too few window samples."""
+    v = np.asarray(v, dtype=float)
+    f = np.asarray(f, dtype=float)
+    order = np.argsort(v)
+    v, f = v[order], f[order]
+    cwin = (v >= -1300.0) & (v <= -1050.0)
+    if cwin.sum() < 4:
+        return None
+    c_level = float(np.mean(f[cwin]))
+    if not np.isfinite(c_level) or c_level <= 0:
+        return None
+    win = (v <= -1050.0) | (v >= 1650.0)
+    d = np.diff(f[win] / c_level)
+    d = d[np.isfinite(d)]
+    if d.size < 8:
+        return None
+    sig_nat = 1.4826 * float(np.median(np.abs(d - np.median(d)))) / np.sqrt(2.0)
+    dv_can = float(VELOCITY[1] - VELOCITY[0])
+    dv_nat = float(np.median(np.diff(v)))
+    n_avg = max(1.0, dv_can / max(dv_nat, 1e-3))   # canonical bin averages n_avg native bins
+    return max(sig_nat / np.sqrt(n_avg), 5e-3)
+
+
+def _gof_selfcal(x, mu, sig_emu, sig_data=None):
     """Reduced chi2 with the noise level estimated from the DATA's own line-free
-    continuum regions: sigma_tot^2 = sigma_emu^2 + sigma_cont^2.
+    continuum regions: sigma_tot^2 = sigma_emu^2 + sigma_cont^2. `sig_data` overrides
+    the canonical-grid estimate — pass the NATIVE-grid estimate (_native_sigma)
+    whenever the raw input arrays are available.
 
     The emulator is noiseless, so a good fit's residual IS the data's noise — a fixed
     SNR budget therefore mislabels noisy-but-well-fit sightlines as OOD (measured: at
@@ -174,9 +207,13 @@ def _gof_selfcal(x, mu, sig_emu):
     falsely redden clean sightlines. The 5e-3 floor covers the emulator's own
     systematic error on near-noiseless uploads.
     Returns (chi2r, resid, sigma_tot, sigma_cont)."""
-    win = (VELOCITY <= -1050.0) | (VELOCITY >= 1650.0)
-    d = np.diff(np.asarray(x)[win])
-    sig_c = max(1.4826 * float(np.median(np.abs(d - np.median(d)))) / np.sqrt(2.0), 5e-3)
+    if sig_data is not None:
+        sig_c = float(sig_data)
+    else:
+        win = (VELOCITY <= -1050.0) | (VELOCITY >= 1650.0)
+        d = np.diff(np.asarray(x)[win])
+        sig_c = max(1.4826 * float(np.median(np.abs(d - np.median(d)))) / np.sqrt(2.0),
+                    5e-3)
     sig_tot = np.sqrt(np.asarray(sig_emu) ** 2 + sig_c ** 2)
     resid = (np.asarray(x) - np.asarray(mu)) / sig_tot
     return float(np.mean(resid ** 2)), resid, sig_tot, sig_c
@@ -196,18 +233,22 @@ def _survey_fit(raw, name, config_path):
     ok = np.zeros(NPIX, dtype=bool)
     errors = {}
     x_can = np.full((NPIX, VELOCITY.size), np.nan, dtype=np.float32)
+    sig_d = np.full(NPIX, np.nan, dtype=float)
     prog = st.progress(0.0, text="fitting sightlines…")
     for i, (v, f) in enumerate(pairs):
         try:
             if v is None:                          # per-member zip failure sentinel
                 raise ValueError(str(f))
+            sig_d[i] = _native_sigma(v, f) or np.nan
             x = obs_loader.ingest_vf(v, f)
             samp = core.run_npe(posterior, prior, x, dev, conditioned=cond,
                                 lsf=_LSF, snr=_SNR, n=2000, n_ap=n_ap)
             med[i] = np.median(samp, axis=0)
             w68[i] = np.percentile(samp, 84, axis=0) - np.percentile(samp, 16, axis=0)
             mu, sig = core.emulate(emulator, prior, med[i])
-            chi2[i], _, _, _ = _gof_selfcal(x, np.squeeze(mu), np.squeeze(sig))
+            chi2[i], _, _, _ = _gof_selfcal(
+                x, np.squeeze(mu), np.squeeze(sig),
+                sig_data=None if np.isnan(sig_d[i]) else sig_d[i])
             x_can[i] = x
             ok[i] = True
         except Exception as e:                     # a bad row grays its pixel, not the run
@@ -215,7 +256,7 @@ def _survey_fit(raw, name, config_path):
         prog.progress((i + 1) / NPIX, text=f"fitting sightlines… {i + 1}/{NPIX}")
     prog.empty()
     return {"med": med, "w68": w68, "chi2": chi2, "ok": ok, "errors": errors,
-            "x": x_can, "names": list(prior.names)}
+            "x": x_can, "sig_data": sig_d, "names": list(prior.names)}
 
 
 # ---- globe -------------------------------------------------------------------
@@ -386,7 +427,9 @@ def render(ctx):
     rows, med = core.param_disclosure(samp, ctx.prior, ctx.names)
     mu, sig = core.emulate(ctx.emulator, ctx.prior, med)
     mu, sig = np.squeeze(mu), np.squeeze(sig)
-    chi2, resid, sig_tot, sig_c = _gof_selfcal(x, mu, sig)
+    _sd = res["sig_data"][pix]
+    chi2, resid, sig_tot, sig_c = _gof_selfcal(
+        x, mu, sig, sig_data=None if np.isnan(_sd) else _sd)
     g_hi, a_hi = _bands(ref)
     verdict = (st.success if chi2 <= g_hi else
                st.warning if chi2 <= a_hi else st.error)
