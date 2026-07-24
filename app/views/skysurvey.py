@@ -260,21 +260,22 @@ def _survey_fit(raw, name, config_path):
 
 
 # ---- globe -------------------------------------------------------------------
-GREEN_CHI2 = 4.5     # user-set good-fit bound: chi2r at/below this reads green
+GREEN_CHI2 = 2.5     # user-set good-fit bound: chi2r at/below this reads green
 
 
 def _bands(ref):
-    """(green_hi, amber_hi) chi2r thresholds. green = the USER-SET bound (4.5, chosen
-    2026-07-24 for tolerance on real AGORA sightlines); amber ('tension') runs to 2x
-    that (9.0); red beyond = out-of-distribution.
+    """(green_hi, amber_hi) chi2r thresholds. green = the USER-SET bound (2.5 —
+    restored 2026-07-24 after the native-grid noise fix removed the chi2 inflation
+    that had motivated a temporary 4.5); amber ('tension') runs to 2x that (5.0);
+    red beyond = out-of-distribution.
 
-    Measured context (self-calibrated noise budget): clean held-out fits score p50≈1.0
-    with a ceiling of ~1.8, so 4.5 admits everything valid with a wide margin — the
-    deliberate trade is that MILD corruptions (shallow velocity-mirror tests at
-    chi2 2.8–4.3) also read green, and moderate ones (5–8) read amber; only clearly
-    broken sightlines (deep mirrors 90+, wrong normalization 10^2-10^3, failed fits
-    beyond ~9) stay red. Near the boundary the residual panel is the tiebreaker:
-    white residuals -> noise, coherent line-region structure -> real tension."""
+    Measured context (self-calibrated, native-grid noise budget): clean held-out fits
+    score p50≈1.0 with a ceiling of ~1.8 at ANY input resolution/noise level, so 2.5
+    admits everything valid with margin while shallow corruptions (mirror tests at
+    2.8-4.3) read amber and clearly broken sightlines (deep mirrors 39-92, failed
+    fits, normalization errors 10^2-10^3) read red. Near the boundary the residual
+    panel is the tiebreaker: white residuals -> noise, coherent line-region
+    structure -> real tension."""
     return GREEN_CHI2, 2.0 * GREEN_CHI2
 
 
