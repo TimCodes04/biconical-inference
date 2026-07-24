@@ -219,16 +219,21 @@ def _survey_fit(raw, name, config_path):
 
 
 # ---- globe -------------------------------------------------------------------
-GREEN_CHI2 = 2.5     # user-set good-fit bound: chi2r at/below this reads green
+GREEN_CHI2 = 4.5     # user-set good-fit bound: chi2r at/below this reads green
 
 
 def _bands(ref):
-    """(green_hi, amber_hi) chi2r thresholds. green = the user-set bound (2.5); amber
-    ('tension') runs to 2x that; red beyond = out-of-distribution. Context from the
-    held-out calibration: truth-eval reference p95≈1.16/p99≈1.28 and clean FITTED-median
-    chi2 tops out at ~1.76 — so 2.5 sits comfortably above anything a valid biconical
-    sightline produces (0/187 clean rows above it), while genuinely OOD spectra
-    (velocity-mirrored tests, AGORA sightlines) score ≳5–130."""
+    """(green_hi, amber_hi) chi2r thresholds. green = the USER-SET bound (4.5, chosen
+    2026-07-24 for tolerance on real AGORA sightlines); amber ('tension') runs to 2x
+    that (9.0); red beyond = out-of-distribution.
+
+    Measured context (self-calibrated noise budget): clean held-out fits score p50≈1.0
+    with a ceiling of ~1.8, so 4.5 admits everything valid with a wide margin — the
+    deliberate trade is that MILD corruptions (shallow velocity-mirror tests at
+    chi2 2.8–4.3) also read green, and moderate ones (5–8) read amber; only clearly
+    broken sightlines (deep mirrors 90+, wrong normalization 10^2-10^3, failed fits
+    beyond ~9) stay red. Near the boundary the residual panel is the tiebreaker:
+    white residuals -> noise, coherent line-region structure -> real tension."""
     return GREEN_CHI2, 2.0 * GREEN_CHI2
 
 
