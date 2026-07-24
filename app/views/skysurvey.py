@@ -260,23 +260,25 @@ def _survey_fit(raw, name, config_path):
 
 
 # ---- globe -------------------------------------------------------------------
-GREEN_CHI2 = 2.5     # user-set good-fit bound: chi2r at/below this reads green
+GREEN_CHI2 = 2.5     # default good-fit bound; live-adjustable via the tab's slider
 
 
 def _bands(ref):
-    """(green_hi, amber_hi) chi2r thresholds. green = the USER-SET bound (2.5 —
-    restored 2026-07-24 after the native-grid noise fix removed the chi2 inflation
-    that had motivated a temporary 4.5); amber ('tension') runs to 2x that (5.0);
-    red beyond = out-of-distribution.
+    """(green_hi, amber_hi) chi2r thresholds. green = the user's slider value
+    (session key 'sky_green', default 2.5, range 0.8-3.0); amber ('tension') runs to
+    2x green; red beyond = out-of-distribution.
 
     Measured context (self-calibrated, native-grid noise budget): clean held-out fits
-    score p50≈1.0 with a ceiling of ~1.8 at ANY input resolution/noise level, so 2.5
-    admits everything valid with margin while shallow corruptions (mirror tests at
-    2.8-4.3) read amber and clearly broken sightlines (deep mirrors 39-92, failed
-    fits, normalization errors 10^2-10^3) read red. Near the boundary the residual
-    panel is the tiebreaker: white residuals -> noise, coherent line-region
-    structure -> real tension."""
-    return GREEN_CHI2, 2.0 * GREEN_CHI2
+    score p50≈1.0 with a ceiling of ~1.8 at ANY input resolution/noise level — so the
+    slider's lower stops trade tolerance for discrimination inside that regime, while
+    clearly broken sightlines (deep mirrors 39-92, normalization errors 10^2-10^3)
+    stay red at every setting. Near the boundary the residual panel is the tiebreaker:
+    white residuals -> noise, coherent line-region structure -> real tension."""
+    try:
+        g = float(st.session_state.get("sky_green", GREEN_CHI2))
+    except Exception:                              # bare mode (tests) -> default
+        g = GREEN_CHI2
+    return g, 2.0 * g
 
 
 def _verdict_colors(chi2, ok, ref):
@@ -402,13 +404,19 @@ def render(ctx):
         return
     grid = _grid()
     ref = core.gof_reference(_SNR, _LSF, ctx.config_path)
+    sc1, sc2 = st.columns([0.45, 0.55], vertical_alignment="center")
+    sc1.slider("good-fit bound χ²ᵣ (green ≤ this; red > 2×)", 0.8, 3.0, GREEN_CHI2,
+               step=0.05, key="sky_green",
+               help="Clean held-out fits score χ²ᵣ ≈ 1.0 with a ceiling ≈ 1.8 — lower "
+                    "values trade tolerance for discrimination. Re-coloring is instant "
+                    "(fits are cached).")
     cols = _verdict_colors(res["chi2"], res["ok"], ref)
     g_hi, a_hi = _bands(ref)
     n_ok = int(res["ok"].sum())
     n_bad = int((res["ok"] & (res["chi2"] > a_hi)).sum())
-    st.markdown(f"**{n_ok}/{NPIX}** sightlines fitted · **{n_bad}** out-of-distribution "
-                f"(χ²ᵣ > {a_hi:.2f}) · green ≤ {g_hi:.2f} · held-out reference p50 "
-                f"{ref['p50']:.2f}")
+    sc2.markdown(f"**{n_ok}/{NPIX}** sightlines fitted · **{n_bad}** out-of-distribution "
+                 f"(χ²ᵣ > {a_hi:.2f}) · green ≤ {g_hi:.2f} · held-out reference p50 "
+                 f"{ref['p50']:.2f}")
     if res["errors"]:
         with st.expander(f"{len(res['errors'])} pixels failed ingestion"):
             for p, msg in sorted(res["errors"].items()):
