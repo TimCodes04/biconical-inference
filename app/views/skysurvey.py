@@ -2,7 +2,7 @@
 
 Upload the 192 r_vir spectra of one AGORA snapshot observed from the Nside=4 HealPix
 directions (a single .npz bundle or a .zip of per-direction files). Every spectrum is
-fitted by the amortized 1-D flow; a see-through globe shows the HealPix tiling colored
+fitted by the amortized 1-D flow; a solid globe shows the HealPix tiling colored
 by fit quality (green/amber/red chi2r bands calibrated on held-out fits — see _bands).
 Clicking
 a pixel shows the fitted bicone and, under it, the spectrum with the emulator's fit
@@ -295,7 +295,7 @@ _RGB = {"#3fa46a": "rgb(63,164,106)", "#c99a2e": "rgb(201,154,46)",
 
 
 def _globe_fig(grid, cols, chi2, lonlat):
-    """See-through HealPix globe: tile mesh (2 triangles/pixel), boundary wires, and
+    """Solid HealPix globe: tile mesh (2 triangles/pixel), boundary wires, and
     pixel-center markers (the click targets, curve index 2). Rendered by the in-repo
     skyglobe component (vendored modern plotly.js); the spec stays conservative
     (per-vertex rgb() colors, no template) so it renders identically everywhere."""
@@ -308,7 +308,7 @@ def _globe_fig(grid, cols, chi2, lonlat):
     rgb = [_RGB.get(c, "rgb(90,97,110)") for c in cols]
     vertexcolor = [c for c in rgb for _ in range(4)]          # 4 verts share the tile color
     mesh = go.Mesh3d(x=verts[:, 0], y=verts[:, 1], z=verts[:, 2],
-                     i=i, j=j, k=k, vertexcolor=vertexcolor, opacity=0.45,
+                     i=i, j=j, k=k, vertexcolor=vertexcolor, opacity=1.0,
                      hoverinfo="skip")
     ex, ey, ez = [], [], []
     for c in corners:

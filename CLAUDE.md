@@ -193,7 +193,7 @@ infers EW instead of fixing it.
     **Forward model** / **Method**. The 1-D flow workspace adds a 4th tab,
     `app/views/skysurvey.py` — the 192-direction HealPix AGORA survey: upload a bundle
     (.npz `vel_kms`+`flux (192,N)` RING order, or a zip of per-direction files), all
-    sightlines are fitted amortized, and a rotatable see-through globe (geometry:
+    sightlines are fitted amortized, and a rotatable solid globe (geometry:
     `app/static/healpix_nside4.json`, regenerate via `uv run --with healpy
     scripts/make_healpix_grid.py`) colors tiles by χ²ᵣ verdict; clicking a pixel shows
     its bicone + emulator-overlay fit. 3-D clicks go through the tiny in-repo component
