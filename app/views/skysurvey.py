@@ -413,9 +413,14 @@ def render(ctx):
     cols = _verdict_colors(res["chi2"], res["ok"], ref)
     g_hi, a_hi = _bands(ref)
     n_ok = int(res["ok"].sum())
-    n_bad = int((res["ok"] & (res["chi2"] > a_hi)).sum())
-    sc2.markdown(f"**{n_ok}/{NPIX}** sightlines fitted · **{n_bad}** out-of-distribution "
-                 f"(χ²ᵣ > {a_hi:.2f}) · green ≤ {g_hi:.2f} · held-out reference p50 "
+    n_good = int((res["ok"] & (res["chi2"] <= g_hi)).sum())
+    n_indist = int((res["ok"] & (res["chi2"] <= a_hi)).sum())
+    n_bad = n_ok - n_indist
+    sc2.markdown(f"**{n_ok}/{NPIX}** sightlines fitted · "
+                 f"**{n_good}** good fits (χ²ᵣ ≤ {g_hi:.2f}) · "
+                 f"**{n_indist}** in-distribution (≤ {a_hi:.2f}, incl. "
+                 f"{n_indist - n_good} tension) · "
+                 f"**{n_bad}** OOD (> {a_hi:.2f}) · held-out reference p50 "
                  f"{ref['p50']:.2f}")
     if res["errors"]:
         with st.expander(f"{len(res['errors'])} pixels failed ingestion"):
