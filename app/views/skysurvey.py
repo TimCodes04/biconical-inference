@@ -63,56 +63,96 @@ def _grid():
 
 # ---- ingestion ---------------------------------------------------------------
 def _ingest_npz_bundle(raw):
-    """Single-file bundle: one 1-D velocity array + one (192, N) flux array (any
-    recognizable key names); optional truthy `nest` key -> rows are NESTED order."""
-    d = np.load(io.BytesIO(raw), allow_pickle=True)
-    vel = flux = None
+    """Single-file bundle: a 1-D velocity — or rest-frame wavelength — axis plus a
+    (192, N) flux array, with tolerant key names (the obs-loader vocabularies).
+    Optional keys: truthy `nest` -> rows are in NESTED order; integer `ipix`/`pixel`
+    (192,) -> explicit row->RING-pixel mapping (any row order). Uploads are untrusted:
+    allow_pickle stays False (numeric arrays never need pickle)."""
+    d = np.load(io.BytesIO(raw), allow_pickle=False)
+    vel = wave = flux = flux_any = ipix = None
     nest = False
     for k in d.files:
         a = np.asarray(d[k])
-        nk = "".join(ch for ch in k.lower() if ch.isalnum())
+        nk = obs_loader._norm_key(k)
         if nk in ("nest", "nested"):
-            nest = bool(np.asarray(d[k]).ravel()[0])
+            nest = bool(a.ravel()[0])
+        elif nk in ("ipix", "pix", "pixel", "pixels", "healpix", "hpix") and a.ndim == 1:
+            ipix = a.astype(int)
         elif a.ndim == 1 and a.size > 8 and vel is None and nk in obs_loader._VEL_KEYS:
             vel = a.astype(float)
-        elif a.ndim == 2 and flux is None:
-            flux = a.astype(float)
-    if flux is None or vel is None:
-        raise ValueError("bundle needs a 1-D velocity array (e.g. 'vel_kms') and a "
-                         "2-D flux array of shape (192, N)")
+        elif a.ndim == 1 and a.size > 8 and wave is None and (
+                nk in obs_loader._WAVE_KEYS
+                or any(h in nk for h in obs_loader._WAVE_HINTS)):
+            wave = a.astype(float)
+        elif a.ndim == 2:
+            if flux is None and nk in obs_loader._FLUX_KEYS:
+                flux = a.astype(float)
+            elif flux_any is None:
+                flux_any = a.astype(float)
+    if flux is None:
+        flux = flux_any                            # unnamed 2-D array fallback
+    x_axis, wave_hint = (vel, False) if vel is not None else (wave, True)
+    if flux is None or x_axis is None:
+        raise ValueError("bundle needs a 1-D velocity (e.g. 'vel_kms') or wavelength "
+                         "axis plus a 2-D flux array of shape (192, N)")
     if flux.shape[0] != NPIX and flux.shape[1] == NPIX:
         flux = flux.T
     if flux.shape[0] != NPIX:
-        raise ValueError(f"flux has {flux.shape[0]} rows — expected {NPIX} "
+        raise ValueError(f"flux has shape {flux.shape} — expected ({NPIX}, N) "
                          "(HealPix Nside=4)")
-    if flux.shape[1] != vel.size:
-        raise ValueError(f"flux row length {flux.shape[1]} != velocity length {vel.size}")
-    if nest:
+    if flux.shape[1] != x_axis.size:
+        raise ValueError(f"flux row length {flux.shape[1]} != axis length {x_axis.size}")
+    x_axis = obs_loader._xy_to_vf(x_axis, flux[0], wave_hint)[0]   # Å -> Δv if needed
+    if ipix is not None:
+        if sorted(ipix.tolist()) != list(range(NPIX)):
+            raise ValueError("ipix must be a permutation of 0…191 (RING indices)")
+        ring = np.empty_like(flux)
+        ring[ipix] = flux                          # row i holds pixel ipix[i]
+        flux = ring
+    elif nest:
         ring = np.empty_like(flux)
         ring[_grid()["nest2ring"]] = flux          # nest2ring[i_nest] = i_ring
         flux = ring
-    return [(vel, flux[i]) for i in range(NPIX)]
+    return [(x_axis, flux[i]) for i in range(NPIX)]
 
 
 def _ingest_zip(raw):
-    """Zip of 192 per-direction spectrum files, ordered by the first integer in each
-    member name; each member resolved by the tolerant obs-loader key detection."""
+    """Zip of 192 per-direction .npz files; the pixel is the LAST number in each
+    member's stem (RING index, 0…191). Structural problems (missing/duplicate/extra
+    indices) fail the upload with specifics; a CORRUPT member fails only ITS pixel —
+    such entries come back as (None, error_message)."""
     zf = zipfile.ZipFile(io.BytesIO(raw))
-    members = [m for m in zf.namelist()
-               if m.lower().endswith((".npz", ".npy")) and not m.startswith("__MACOSX")]
-    keyed = []
-    for m in members:
-        nums = re.findall(r"\d+", os.path.basename(m))
-        if nums:
-            keyed.append((int(nums[-1]), m))
-    keyed.sort()
-    if len(keyed) != NPIX:
-        raise ValueError(f"zip holds {len(keyed)} numbered spectrum files — expected {NPIX}")
+    keyed, dups = {}, set()
+    for m in zf.namelist():
+        b = os.path.basename(m)
+        if not b or b.startswith("._") or m.startswith("__MACOSX"):
+            continue
+        stem, ext = os.path.splitext(b)
+        if ext.lower() != ".npz":
+            continue
+        nums = re.findall(r"\d+", stem)
+        if not nums:
+            continue
+        idx = int(nums[-1])
+        if idx in keyed:
+            dups.add(idx)
+        keyed[idx] = m
+    if dups:
+        raise ValueError(f"duplicate pixel indices in the zip: {sorted(dups)[:8]}")
+    missing = [i for i in range(NPIX) if i not in keyed]
+    extra = sorted(set(keyed) - set(range(NPIX)))
+    if missing or extra:
+        raise ValueError(
+            f"zip must hold exactly pixels 000…191 (last number in each filename): "
+            f"{len(missing)} missing (first: {missing[:6]}), unexpected {extra[:6]}")
     out = []
-    for _, m in keyed:
-        d = np.load(io.BytesIO(zf.read(m)), allow_pickle=True)
-        x, f, wave_hint = obs_loader._resolve_from_mapping(d)
-        out.append(obs_loader._xy_to_vf(x, f, wave_hint))
+    for i in range(NPIX):
+        try:
+            d = np.load(io.BytesIO(zf.read(keyed[i])), allow_pickle=False)
+            x, f, wave_hint = obs_loader._resolve_from_mapping(d)
+            out.append(obs_loader._xy_to_vf(x, f, wave_hint))
+        except Exception as e:                     # gray this pixel, keep the survey
+            out.append((None, f"{os.path.basename(keyed[i])}: {e}"))
     return out
 
 
@@ -133,6 +173,8 @@ def _survey_fit(raw, name, config_path):
     prog = st.progress(0.0, text="fitting sightlines…")
     for i, (v, f) in enumerate(pairs):
         try:
+            if v is None:                          # per-member zip failure sentinel
+                raise ValueError(str(f))
             x = obs_loader.ingest_vf(v, f)
             samp = core.run_npe(posterior, prior, x, dev, conditioned=cond,
                                 lsf=_LSF, snr=_SNR, n=2000, n_ap=n_ap)
@@ -151,13 +193,17 @@ def _survey_fit(raw, name, config_path):
 
 
 # ---- globe -------------------------------------------------------------------
+GREEN_CHI2 = 2.5     # user-set good-fit bound: chi2r at/below this reads green
+
+
 def _bands(ref):
-    """(green_hi, amber_hi) chi2r thresholds. The reference percentiles are evaluated
-    at TRUE params, while the survey evaluates chi2 at FITTED medians — measured on 187
-    clean held-out sightlines that inflates the tail ~10% (p99 1.28 -> 1.39, max 1.76),
-    so the bands carry margin: at these thresholds the clean false-red rate is 0/187
-    while genuine OOD sightlines (AGORA) score 5-130."""
-    return 1.3 * ref["p95"], 2.0 * ref["p99"]
+    """(green_hi, amber_hi) chi2r thresholds. green = the user-set bound (2.5); amber
+    ('tension') runs to 2x that; red beyond = out-of-distribution. Context from the
+    held-out calibration: truth-eval reference p95≈1.16/p99≈1.28 and clean FITTED-median
+    chi2 tops out at ~1.76 — so 2.5 sits comfortably above anything a valid biconical
+    sightline produces (0/187 clean rows above it), while genuinely OOD spectra
+    (velocity-mirrored tests, AGORA sightlines) score ≳5–130."""
+    return GREEN_CHI2, 2.0 * GREEN_CHI2
 
 
 def _verdict_colors(chi2, ok, ref):
@@ -175,12 +221,9 @@ _RGB = {"#3fa46a": "rgb(63,164,106)", "#c99a2e": "rgb(201,154,46)",
 
 def _globe_fig(grid, cols, chi2, lonlat):
     """See-through HealPix globe: tile mesh (2 triangles/pixel), boundary wires, and
-    pixel-center markers (the click targets, curve index 2).
-
-    Rendered inside streamlit-plotly-events, whose bundled plotly.js predates several
-    modern attributes — so the spec stays deliberately conservative: per-VERTEX rgb()
-    colors (vertexcolor, supported since early plotly.js) instead of facecolor, no
-    flatshading/lighting, and template stripped from the JSON."""
+    pixel-center markers (the click targets, curve index 2). Rendered by the in-repo
+    skyglobe component (vendored modern plotly.js); the spec stays conservative
+    (per-vertex rgb() colors, no template) so it renders identically everywhere."""
     corners = grid["corners"]                       # (192, 4, 3)
     verts = corners.reshape(-1, 3)                  # 4 verts per pixel
     base = 4 * np.arange(NPIX)
@@ -261,12 +304,16 @@ def render(ctx):
                "ingest failed.")
     with st.expander("bundle format"):
         st.markdown(
-            "**Single `.npz`**: `vel_kms` (N,) — Δv about MgII K [km/s] — plus `flux` "
-            "(192, N) in HealPix **RING** order (add `nest=True` if rows are NESTED). "
-            "**Or a `.zip`** of 192 per-direction files (`*_000.npz` … `*_191.npz`, "
-            "RING index in the name; each with `vel_kms` + `flux`). Flux may be raw or "
+            "**Single `.npz`**: `vel_kms` (N,) — Δv about MgII K [km/s], or a rest-frame "
+            "wavelength axis in Å — plus `flux` (192, N) in HealPix **RING** order. "
+            "Optional keys: `nest=True` if rows are NESTED; `ipix` (192,) to give each "
+            "row's RING pixel explicitly (any row order). "
+            "**Or a `.zip`** of 192 per-direction `.npz` files — the **last number in "
+            "each filename** is the RING pixel (`*_000.npz` … `*_191.npz`), each file "
+            "with `vel_kms` (or wavelength) + `flux`. Flux may be raw or "
             "continuum-normalized — ingestion renormalizes by the far-blue window "
-            "(−1300…−1050 km/s), exactly like the training spectra.")
+            "(−1300…−1050 km/s), exactly like the training spectra. A corrupt zip "
+            "member grays only its own pixel.")
     up = st.file_uploader("192-spectrum bundle (.npz or .zip)", type=["npz", "zip"],
                           key="sky_up")
     if up is None:
