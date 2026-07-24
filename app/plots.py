@@ -64,7 +64,8 @@ def _dim_titles(fig, titles):
 # ============================================================================
 # Spectra — single aperture
 # ============================================================================
-def _add_spectrum(fig, vel, mu_fit, sigma, x_o=None, *, row=1, col=1, first=True):
+def _add_spectrum(fig, vel, mu_fit, sigma, x_o=None, *, row=1, col=1, first=True,
+                  band_label="±1σ model"):
     """One measured-vs-model panel with a ±σ band. x_o None → forward (no data line)."""
     import plotly.graph_objects as go
     mu = np.clip(np.asarray(mu_fit), 0.0, None)
@@ -73,7 +74,7 @@ def _add_spectrum(fig, vel, mu_fit, sigma, x_o=None, *, row=1, col=1, first=True
     fig.add_trace(go.Scatter(x=vel, y=up, mode="lines", line=dict(width=0),
                              hoverinfo="skip", showlegend=False), row=row, col=col)
     fig.add_trace(go.Scatter(x=vel, y=lo, mode="lines", line=dict(width=0), fill="tonexty",
-                             fillcolor=T.BAND, hoverinfo="skip", name="±1σ model",
+                             fillcolor=T.BAND, hoverinfo="skip", name=band_label,
                              showlegend=first), row=row, col=col)
     fig.add_trace(go.Scatter(x=vel, y=mu, mode="lines", name="model @ median",
                              line=dict(color=T.MODEL, width=1.7, dash="dash"), showlegend=first,
@@ -104,12 +105,14 @@ def _add_residual(fig, vel, resid, *, row, col):
 
 
 def fit_residual_plotly(vel, x_o, mu_fit, sigma, resid, chi2, *, height=420):
-    """Measured spectrum vs model-at-median with a ±σ band + a residual panel."""
+    """Measured spectrum vs model-at-median with a ±σ band (the TOTAL noise budget —
+    emulator σ ⊕ data noise, matching χ²'s denominator) + a residual panel."""
     from plotly.subplots import make_subplots
     vel = np.asarray(vel)
     fig = make_subplots(rows=2, cols=1, shared_xaxes=True, row_heights=[0.72, 0.28],
                         vertical_spacing=0.05)
-    ytop = _add_spectrum(fig, vel, mu_fit, sigma, x_o, row=1, col=1, first=True)
+    ytop = _add_spectrum(fig, vel, mu_fit, sigma, x_o, row=1, col=1, first=True,
+                         band_label="±1σ model + noise")
     _add_residual(fig, vel, resid, row=2, col=1)
     fig.update_yaxes(title_text="F / F_cont", range=[-0.05, ytop], row=1, col=1)
     fig.update_yaxes(title_text="resid / σ", range=[-5, 5], row=2, col=1)
@@ -175,7 +178,7 @@ def fit_residual_2ap_plotly(vel, x_o, mu_fit, sigma, resid, chi2, aperture_kpc=N
     for a in range(A):
         col = a + 1
         ytop = max(ytop, _add_spectrum(fig, vel, mu_fit[a], sigma[a], x_o[a], row=1, col=col,
-                                       first=(a == 0)))
+                                       first=(a == 0), band_label="±1σ model + noise"))
         _add_residual(fig, vel, resid[a], row=2, col=col)
         fig.update_yaxes(title_text="resid / σ" if a == 0 else None, range=[-5, 5], row=2, col=col)
         fig.update_xaxes(title_text="Δv [km/s]", row=2, col=col)
@@ -581,7 +584,7 @@ def fit_png(vel, x_o, mu_fit, sigma, resid, chi2, aperture_kpc=None, *, dpi=200)
         axS = fig.add_subplot(gs[0, a]); axR = fig.add_subplot(gs[1, a], sharex=axS)
         m = np.clip(mu[a], 0.0, None)
         up = np.clip(m + sig[a], 0.0, None); lo = np.clip(m - sig[a], 0.0, None)
-        axS.fill_between(vel, lo, up, color=C_MODEL, alpha=0.16, lw=0, label="±1σ model")
+        axS.fill_between(vel, lo, up, color=C_MODEL, alpha=0.16, lw=0, label="±1σ model + noise")
         axS.plot(vel, m, color=C_MODEL, lw=1.5, ls="--", label="model @ median")
         axS.plot(vel, x_o[a], color=C_DATA, lw=1.4, label="measured")
         axS.axhline(1.0, color=C_GUIDE, lw=0.9, ls=":")

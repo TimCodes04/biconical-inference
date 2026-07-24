@@ -427,6 +427,10 @@ def render(ctx: core.AppContext):
     mu_med, sig_med = core.emulate(emulator, ctx.full_prior, med_full)   # (nbins,) or (A, nbins)
     mu_fit = core.apply_lsf(mu_med, lsf_in, DV)
     chi2, resid = core.goodness_of_fit(x_o, mu_fit, sig_med, snr_in)
+    # The plotted band must be the TOTAL noise budget (emulator sigma + instrument
+    # noise), matching chi2's denominator — the emulator sigma head alone is the
+    # surrogate's label-noise uncertainty (~3e-4) and renders as an invisible sliver.
+    sig_band = np.sqrt(sig_med ** 2 + (np.abs(mu_fit) / max(float(snr_in), 1e-6)) ** 2)
     ref = core.gof_reference(snr_in, lsf_in, config_path)
     trustworthy = chi2 <= ref["p99"]
     n_well = sum("well" in r["constraint"] for r in rows)
@@ -528,16 +532,16 @@ def render(ctx: core.AppContext):
     st.markdown("<div class='bw-rule'></div>", unsafe_allow_html=True)
     st.markdown("<span class='bw-eyebrow'>Goodness of fit</span>", unsafe_allow_html=True)
     if two_ap:
-        st.plotly_chart(plots.fit_residual_2ap_plotly(vel, x_o, mu_fit, sig_med, resid, chi2, ap_kpc),
+        st.plotly_chart(plots.fit_residual_2ap_plotly(vel, x_o, mu_fit, sig_band, resid, chi2, ap_kpc),
                         width="stretch", config=T.PLOTLY_CONFIG)
         st.caption("Both apertures are fit jointly by one wind; the χ²ᵣ pools the residuals "
                    "over the inner and r_vir channels.")
     else:
-        st.plotly_chart(plots.fit_residual_plotly(vel, x_o, mu_fit, sig_med, resid, chi2),
+        st.plotly_chart(plots.fit_residual_plotly(vel, x_o, mu_fit, sig_band, resid, chi2),
                         width="stretch", config=T.PLOTLY_CONFIG)
     st.download_button(
         "Spectrum + fit · PNG (white background)",
-        _fit_png_bytes(vel, x_o, mu_fit, sig_med, resid, chi2, (ap_kpc if two_ap else None)),
+        _fit_png_bytes(vel, x_o, mu_fit, sig_band, resid, chi2, (ap_kpc if two_ap else None)),
         file_name=f"biconical_{ctx.active_label.lower().replace(' ', '_')}_fit.png",
         mime="image/png", use_container_width=True,
         help="Measured spectrum with the model-at-median overlay (±σ band) and residuals, "
